@@ -78,6 +78,9 @@ class ErrorEvent:
     message: str
 
 
+# What a provider yields while streaming, before the turn is complete.
+ProviderEvent = TextDeltaEvent | ReasoningDeltaEvent | ToolNameEvent
+
 SessionEvent = (
     AgentStartEvent
     | MessageStartEvent

@@ -7,7 +7,6 @@ requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "openai>=1.50",
-    "pytest>=9.1.1",
 ]
 
 [project.scripts]
@@ -19,3 +18,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tau"]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"

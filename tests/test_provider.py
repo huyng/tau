@@ -1,6 +1,7 @@
 """Provider tests, focused on DeepSeek thinking-mode compatibility."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 from tau.events import ReasoningDeltaEvent, TextDeltaEvent
 from tau.messages import (
@@ -52,6 +53,11 @@ def chunk(*, content=None, reasoning=None, tool_calls=None, finish_reason=None, 
     return SimpleNamespace(choices=choices, usage=usage)
 
 
+def as_dict(value: object) -> dict[str, Any]:
+    """View a chat-completions TypedDict param as a plain dict for tests."""
+    return cast(dict[str, Any], value)
+
+
 def collect(provider, messages):
     """Drive provider.stream to completion, returning (events, message)."""
     stream = provider.stream("system", messages, [])
@@ -98,7 +104,9 @@ def test_reasoning_is_streamed_stored_and_sent_back():
     # are present. Verify it survives serialization and request construction.
     data = serialize_message(message)
     assert data["reasoningContent"] == "Let me think."
-    assert deserialize_message(data).reasoning_content == "Let me think."
+    restored = deserialize_message(data)
+    assert isinstance(restored, AssistantMessage)
+    assert restored.reasoning_content == "Let me think."
 
     request = provider._request_messages(
         "system",
@@ -108,7 +116,7 @@ def test_reasoning_is_streamed_stored_and_sent_back():
             ToolResultMessage(tool_call_id="c1", tool_name="read", output="ok"),
         ],
     )
-    assert request[2]["reasoning_content"] == "Let me think."
+    assert as_dict(request[2])["reasoning_content"] == "Let me think."
 
 
 def test_reasoning_is_not_sent_to_non_deepseek_providers():
@@ -147,7 +155,7 @@ def test_reasoning_passthrough_can_be_forced_with_env(monkeypatch):
 
     request = provider._request_messages("system", [message])
 
-    assert request[1]["reasoning_content"] == "private reasoning"
+    assert as_dict(request[1])["reasoning_content"] == "private reasoning"
 
 
 def test_reasoning_is_sent_back_alongside_tool_calls():
@@ -163,7 +171,7 @@ def test_reasoning_is_sent_back_alongside_tool_calls():
     )
 
     request = provider._request_messages("system", [message])
-    assistant = request[1]
+    assistant = as_dict(request[1])
 
     assert assistant["reasoning_content"] == "I should read the file."
     assert assistant["tool_calls"][0]["function"]["name"] == "read"

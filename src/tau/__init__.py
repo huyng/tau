@@ -12,6 +12,7 @@ Exposes an SDK-style factory, mirroring pi's `createAgentSession()`:
 
 from .agent import AgentSession
 from .session import SessionManager
+from .tools import Tool, default_tools
 
 __version__ = "0.1.0"
 
@@ -23,7 +24,7 @@ def create_agent_session(
     base_url: str | None = None,
     api_key: str | None = None,
     cwd: str | None = None,
-    tools=None,
+    tools: list[Tool] | None = None,
     persistent: bool = True,
 ) -> AgentSession:
     """Create an agent session with sensible defaults.
@@ -34,10 +35,10 @@ def create_agent_session(
     """
     from .prompts import build_system_prompt
     from .provider import OpenAIProvider
-    from .tools import default_tools
 
     provider = OpenAIProvider(model=model, base_url=base_url, api_key=api_key)
-    session_manager = SessionManager() if persistent else SessionManager.in_memory()
+    in_memory = False if persistent else True
+    session_manager = SessionManager(in_memory=in_memory)
     return AgentSession(
         provider=provider,
         tools=tools if tools is not None else default_tools(),

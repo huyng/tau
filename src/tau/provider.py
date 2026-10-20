@@ -14,9 +14,10 @@ consumes it like this:
 import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from .events import ReasoningDeltaEvent, TextDeltaEvent, ToolNameEvent
+from .events import ProviderEvent, ReasoningDeltaEvent, TextDeltaEvent, ToolNameEvent
 from .messages import (
     AgentMessage,
     AssistantMessage,
@@ -27,6 +28,33 @@ from .messages import (
     UserMessage,
 )
 from .tools import Tool
+
+if TYPE_CHECKING:
+    # Only needed for annotations; the SDK itself stays a lazy import.
+    from openai.types.chat import (
+        ChatCompletionMessageParam,
+        ChatCompletionToolParam,
+    )
+
+
+class Provider(Protocol):
+    """What the agent needs from a model runtime; OpenAIProvider implements it.
+
+    Tests and other hosts can satisfy it with a stand-in instead of a real
+    client. ``stream`` yields events and returns the completed message via
+    StopIteration.value.
+    """
+
+    name: str
+    model: str
+
+    def stream(
+        self,
+        system_prompt: str,
+        messages: list[AgentMessage],
+        tools: list[Tool],
+        abort_event: threading.Event | None = None,
+    ) -> Generator[ProviderEvent, None, AssistantMessage]: ...
 
 
 class OpenAIProvider:
@@ -66,8 +94,12 @@ class OpenAIProvider:
 
     # -- request construction ------------------------------------------------
 
-    def _request_messages(self, system_prompt: str, messages: list[AgentMessage]) -> list[dict]:
-        request: list[dict] = [{"role": "system", "content": system_prompt}]
+    def _request_messages(
+        self, system_prompt: str, messages: list[AgentMessage]
+    ) -> list[ChatCompletionMessageParam]:
+        request: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt}
+        ]
         for message in messages:
             if isinstance(message, UserMessage):
                 request.append({"role": "user", "content": message.content})
@@ -83,14 +115,15 @@ class OpenAIProvider:
                     }
                     for call in message.tool_calls
                 ]
-                entry: dict = {"role": "assistant"}
+                entry: dict[str, Any] = {"role": "assistant"}
                 if message.text:
                     entry["content"] = message.text
                 if message.reasoning_content and self.pass_reasoning_content:
+                    # DeepSeek-only field: not part of the SDK's TypedDicts.
                     entry["reasoning_content"] = message.reasoning_content
                 if calls:
                     entry["tool_calls"] = calls
-                request.append(entry)
+                request.append(cast("ChatCompletionMessageParam", entry))
             elif isinstance(message, ToolResultMessage):
                 request.append(
                     {
@@ -102,7 +135,7 @@ class OpenAIProvider:
         return request
 
     @staticmethod
-    def _tool_schemas(tools: list[Tool]) -> list[dict]:
+    def _tool_schemas(tools: list[Tool]) -> list[ChatCompletionToolParam]:
         return [
             {
                 "type": "function",
@@ -123,13 +156,15 @@ class OpenAIProvider:
         messages: list[AgentMessage],
         tools: list[Tool],
         abort_event: threading.Event | None = None,
-    ) -> Iterator[TextDeltaEvent | ToolNameEvent]:
+    ) -> Generator[ProviderEvent, None, AssistantMessage]:
         """Yield streaming events; the completed AssistantMessage is the
         generator's return value (StopIteration.value)."""
+        from openai import omit  # sentinel: callers may have no tools at all
+
         stream = self.client.chat.completions.create(
             model=self.model,
             messages=self._request_messages(system_prompt, messages),
-            tools=self._tool_schemas(tools) if tools else None,
+            tools=self._tool_schemas(tools) if tools else omit,
             stream=True,
             stream_options={"include_usage": True},
         )
@@ -148,11 +183,12 @@ class OpenAIProvider:
                     aborted = True
                     stream.close()
                     break
-                if getattr(chunk, "usage", None):
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
                     usage = Usage(
-                        input=chunk.usage.prompt_tokens or 0,
-                        output=chunk.usage.completion_tokens or 0,
-                        total_tokens=chunk.usage.total_tokens or 0,
+                        input=chunk_usage.prompt_tokens or 0,
+                        output=chunk_usage.completion_tokens or 0,
+                        total_tokens=chunk_usage.total_tokens or 0,
                     )
                 if not chunk.choices:
                     continue

@@ -32,7 +32,7 @@ from .messages import (
     Usage,
     UserMessage,
 )
-from .provider import OpenAIProvider
+from .provider import Provider
 from .session import SessionManager
 from .tools import Tool, ToolResult, validate_arguments
 
@@ -43,7 +43,7 @@ RETRY_DELAYS = (1, 2, 4)
 class AgentSession:
     def __init__(
         self,
-        provider: OpenAIProvider,
+        provider: Provider,
         tools: list[Tool],
         session_manager: SessionManager,
         system_prompt: str,

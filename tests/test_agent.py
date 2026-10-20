@@ -1,6 +1,7 @@
 """Tests for the tau agent harness using a scripted fake provider."""
 
 import json
+from typing import Any, cast
 
 import pytest
 
@@ -54,7 +55,7 @@ class EchoTool(Tool):
     def __init__(self):
         self.calls: list[dict] = []
 
-    def execute(self, text: str, **_) -> ToolResult:
+    def execute(self, text: str, **_: Any) -> ToolResult:  # type: ignore[override]
         self.calls.append({"text": text})
         return ToolResult(output=f"echo: {text}")
 
@@ -111,12 +112,14 @@ def test_agent_loop_tool_call_and_final_text(tmp_path):
         ToolResultMessage,
         AssistantMessage,
     ]
+    assert isinstance(messages[2], ToolResultMessage)
     assert messages[2].output == "echo: hello"
     assert session.last_assistant_text() == "all done"
 
     # the second request included the tool result
-    provider = session.provider
+    provider = cast(FakeProvider, session.provider)
     _, second_request_messages, _ = provider.requests[1]
+    assert isinstance(second_request_messages[-1], ToolResultMessage)
     assert second_request_messages[-1].output == "echo: hello"
 
 
@@ -130,7 +133,9 @@ def test_session_jsonl_persistence(tmp_path):
     session, _, manager = make_session(tmp_path, [turn])
     session.prompt("say hi")
 
-    lines = [json.loads(l) for l in manager.file.read_text().splitlines() if l.strip()]
+    session_file = manager.file
+    assert session_file is not None
+    lines = [json.loads(l) for l in session_file.read_text().splitlines() if l.strip()]
     entries = [l for l in lines if "id" in l]
     pointers = [l for l in lines if "current" in l]
     assert len(entries) == 2  # user + assistant
@@ -142,7 +147,7 @@ def test_session_jsonl_persistence(tmp_path):
 
     # reload and verify the active branch is restored
     restored = SessionManager(directory=tmp_path)
-    restored.load(manager.file)
+    restored.load(session_file)
     assert [type(m) for m in restored.active_branch()] == [UserMessage, AssistantMessage]
 
 
@@ -248,7 +253,7 @@ def test_repl_renders_text_and_reasoning_deltas(capsys):
         def subscribe(self, cb):
             return lambda: None
 
-    repl = Repl(StubSession())
+    repl = Repl(cast(AgentSession, StubSession()))
     repl._on_event(MessageStartEvent())
     repl._on_event(ReasoningDeltaEvent(delta="thinking... "))
     repl._on_event(TextDeltaEvent(delta="Hello"))

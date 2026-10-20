@@ -1,5 +1,6 @@
 import os
 import stat
+from typing import Any
 
 from .base import Tool, ToolResult
 
@@ -30,8 +31,8 @@ class ReadTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, path: str, offset: float | None = None, limit: float | None = None,
-                **_) -> ToolResult:
+    def execute(self, path: str, offset: float | None = None,  # type: ignore[override]
+                limit: float | None = None, **_: Any) -> ToolResult:
         path = os.path.expanduser(path)
         if not os.path.isabs(path) and self.cwd:
             path = os.path.join(self.cwd, path)

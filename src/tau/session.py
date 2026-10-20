@@ -21,22 +21,14 @@ SESSIONS_DIR = Path(
 
 
 class SessionManager:
-    def __init__(self, directory: Path | None = None):
+    def __init__(self, directory: Path | None = None, *, in_memory: bool = False):
         self.directory = directory if directory is not None else SESSIONS_DIR
-        self.in_memory = directory is None and False  # set by in_memory()
+        self.in_memory = in_memory
         self.file: Path | None = None
         self.entries: dict[str, dict] = {}
         self.current_id: str | None = None
 
     # -- construction ----------------------------------------------------------
-
-    @classmethod
-    def in_memory(cls) -> SessionManager:
-        """A session manager that never touches the filesystem."""
-        manager = cls(directory=Path(".").anchor or Path("/tmp"))
-        manager.in_memory = True
-        manager.directory = None
-        return manager
 
     def new_session(self) -> None:
         self.entries = {}

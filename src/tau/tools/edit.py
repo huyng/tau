@@ -1,6 +1,7 @@
 import difflib
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from .base import Tool, ToolResult
 
@@ -114,7 +115,7 @@ class EditTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, path: str, edits: list[dict], **_) -> ToolResult:
+    def execute(self, path: str, edits: list[dict], **_: Any) -> ToolResult:  # type: ignore[override]
         path = os.path.expanduser(path)
         if not os.path.isabs(path) and self.cwd:
             path = os.path.join(self.cwd, path)
@@ -209,7 +210,7 @@ class WriteTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, path: str, content: str, **_) -> ToolResult:
+    def execute(self, path: str, content: str, **_: Any) -> ToolResult:  # type: ignore[override]
         path = os.path.expanduser(path)
         if not os.path.isabs(path) and self.cwd:
             path = os.path.join(self.cwd, path)

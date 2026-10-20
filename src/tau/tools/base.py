@@ -3,6 +3,7 @@ parameters, and an execute method returning a ToolResult."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -17,8 +18,14 @@ class Tool(ABC):
     parameters: dict = {"type": "object", "properties": {}}
 
     @abstractmethod
-    def execute(self, **kwargs) -> ToolResult:
-        """Execute the tool with validated JSON-schema arguments."""
+    def execute(self, **kwargs: Any) -> ToolResult:
+        """Execute the tool with validated JSON-schema arguments.
+
+        Subclasses narrow this to the arguments they need, which is
+        deliberately incompatible with this signature (callers dispatch with
+        arbitrary ``**arguments`` from the model), so each override carries
+        ``# type: ignore[override]``.
+        """
 
     def schema(self) -> dict:
         return {

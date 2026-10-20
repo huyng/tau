@@ -1,5 +1,6 @@
 import os
 import subprocess
+from typing import Any
 
 from .base import Tool, ToolResult
 
@@ -24,7 +25,8 @@ class BashTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, command: str, timeout: float | None = None, **_) -> ToolResult:
+    def execute(self, command: str, timeout: float | None = None,  # type: ignore[override]
+                **_: Any) -> ToolResult:
         try:
             proc = subprocess.run(
                 command,
