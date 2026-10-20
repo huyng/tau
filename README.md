@@ -85,10 +85,22 @@ tau --resume 2          # resume a previous session
 Slash commands inside the REPL:
 
 ```
-/help /model /tools /system /new /sessions /resume /usage /quit
+/help /model /tools /system /plain /thinking /new /sessions /resume /usage /quit
 ```
 
 Ctrl-C aborts the active run (steering between turns). Ctrl-D exits.
+
+### Terminal output
+
+Assistant text is rendered as lightweight Markdown (headings, bullets, inline
+code, fenced code blocks), tool calls are shown as compact `╭─` / `╰─` blocks,
+and `edit` results include a colorized unified diff. Reasoning streams behind a
+dim gutter and can be hidden with `/thinking`; `/plain` disables Markdown
+rendering.
+
+Styling follows the terminal's ANSI palette and is disabled automatically for
+non-TTY output, `NO_COLOR`, or `TERM=dumb`, so `tau -p` stays scriptable.
+`FORCE_COLOR=1` overrides detection.
 
 ## How it works
 

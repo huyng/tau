@@ -2,12 +2,13 @@
 
 Modes:
 - interactive (default): stream responses, use slash commands
-- print: `tau -p \"prompt\"` runs once and writes the final response
+- print: `tau -p "prompt"` runs once and writes the final response
 """
 
 import argparse
 import os
 import sys
+import time
 
 from . import __version__
 from .agent import AgentSession
@@ -25,23 +26,25 @@ from .events import (
 )
 from .prompts import build_system_prompt
 from .provider import OpenAIProvider
+from .render import (
+    GutterWriter,
+    MarkdownRenderer,
+    format_duration,
+    render_tool_result,
+    summarize_tool_call,
+)
 from .session import SessionManager
 from .spinner import Spinner
+from .theme import DIM, Theme, get_theme, terminal_width
 from .tools import default_tools
-
-# ANSI styling
-DIM = "\x1b[2m"
-BOLD = "\x1b[1m"
-CYAN = "\x1b[36m"
-YELLOW = "\x1b[33m"
-RED = "\x1b[31m"
-RESET = "\x1b[0m"
 
 HELP = """\
 /help              Show this help
 /model [name]      Show or switch the model
 /tools             List active tools
 /system            Show the current system prompt
+/plain             Toggle Markdown rendering
+/thinking          Toggle streamed model reasoning
 /new               Start a new session
 /sessions          List recent sessions
 /resume <n>        Resume the n-th session from /sessions
@@ -70,12 +73,21 @@ def make_session(args: argparse.Namespace) -> AgentSession:
 
 
 class Repl:
-    def __init__(self, session: AgentSession):
+    def __init__(self, session: AgentSession, theme: Theme | None = None):
         self.session = session
+        self.theme = theme if theme is not None else get_theme()
+        self.width = terminal_width()
+        self.markdown = True
+        self.show_thinking = True
+
         self.session.subscribe(self._on_event)
         self._tool_line_open = False
         self._text_started = False
+        self._text_ends_newline = False
         self._reasoning_started = False
+        self._renderer = MarkdownRenderer(self.theme, self.width)
+        self._reasoning = GutterWriter(self.theme, style=DIM)
+        self._tool_started: dict[str, float] = {}
         self._spinner = Spinner()
 
     # -- event rendering ---------------------------------------------------------
@@ -83,42 +95,86 @@ class Repl:
     def _on_event(self, event) -> None:
         if isinstance(event, MessageStartEvent):
             self._text_started = False
+            self._text_ends_newline = False
             self._reasoning_started = False
-            self._spinner.start(self.session.provider.model)
+            self._renderer = MarkdownRenderer(self.theme, self.width)
+            self._reasoning = GutterWriter(self.theme, style=DIM)
+            self._spinner.start(f"{self.session.provider.model} · thinking")
             return
         if isinstance(event, (AgentStartEvent, ToolNameEvent)):
             return
-        # every remaining event can produce output: retire the spinner first
+
+        # Every remaining event can produce output: retire the spinner first.
         self._spinner.stop()
+
         if isinstance(event, ReasoningDeltaEvent):
-            print(f"{DIM}{event.delta}{RESET}", end="", flush=True)
-            self._reasoning_started = True
+            if self.show_thinking:
+                print(self._reasoning.feed(event.delta), end="", flush=True)
+                self._reasoning_started = True
         elif isinstance(event, TextDeltaEvent):
-            if self._reasoning_started and not self._text_started:
-                print()  # separate reasoning from the answer
+            self._finish_reasoning()
             self._text_started = True
-            print(event.delta, end="", flush=True)
+            self._text_ends_newline = event.delta.endswith("\n")
+            if self.markdown:
+                print(self._renderer.feed(event.delta), end="", flush=True)
+            else:
+                print(event.delta, end="", flush=True)
         elif isinstance(event, MessageEndEvent):
-            if self._text_started and not event.message.text.endswith("\n"):
-                print()
+            self._finish_reasoning()
+            self._finish_text(event.message.text)
         elif isinstance(event, ToolExecutionStartEvent):
+            self._finish_reasoning()
+            self._finish_text()
             call = event.tool_call
-            args_preview = _format_args(call.arguments)
+            summary = summarize_tool_call(
+                self.theme, call.name, call.arguments, self.width
+            )
             self._close_tool_line()
-            print(f"{DIM}→ {call.name}({args_preview}){RESET}", flush=True)
+            head = self.theme.dim("╭─ ") + self.theme.bold(call.name)
+            if summary:
+                head += " " + summary
+            print(head, flush=True)
             self._tool_line_open = True
+            self._tool_started[call.id] = time.monotonic()
+            self._spinner.start(f"{call.name} …")
         elif isinstance(event, ToolExecutionEndEvent):
-            status = "✗" if event.result.is_error else "✓"
-            first_line = event.result.output.strip().splitlines()
-            preview = first_line[0][:100] if first_line else ""
-            if self._tool_line_open:
-                print(f"{DIM}  {status} {preview}{RESET}", flush=True)
-                self._tool_line_open = False
+            started = self._tool_started.pop(event.tool_call.id, None)
+            elapsed = time.monotonic() - started if started is not None else 0.0
+            print(
+                render_tool_result(
+                    self.theme,
+                    event.tool_call.name,
+                    event.result.output,
+                    event.result.is_error,
+                    elapsed,
+                    self.width,
+                ),
+                flush=True,
+            )
+            self._tool_line_open = False
         elif isinstance(event, ErrorEvent):
-            print(f"{YELLOW}{event.message}{RESET}", file=sys.stderr, flush=True)
+            print(self.theme.warning(event.message), file=sys.stderr, flush=True)
         elif isinstance(event, AgentEndEvent):
+            self._finish_reasoning()
+            self._finish_text()
             if event.aborted:
-                print(f"{YELLOW}[aborted]{RESET}", flush=True)
+                print(self.theme.warning("[aborted]"), flush=True)
+
+    def _finish_reasoning(self) -> None:
+        if self._reasoning_started:
+            print(self._reasoning.flush(), end="", flush=True)
+            self._reasoning_started = False
+
+    def _finish_text(self, text: str | None = None) -> None:
+        if not self._text_started:
+            return
+        if self.markdown:
+            print(self._renderer.flush(), end="", flush=True)
+        else:
+            ended = text.endswith("\n") if text is not None else self._text_ends_newline
+            if not ended:
+                print(flush=True)
+        self._text_started = False
 
     def _close_tool_line(self) -> None:
         self._tool_line_open = False
@@ -126,18 +182,20 @@ class Repl:
     # -- main loop ----------------------------------------------------------------
 
     def run(self) -> None:
+        theme = self.theme
         print(
-            f"{BOLD}tau{RESET} {DIM}v{__version__} · {self.session.provider.model} · "
-            f"{self.session.session_manager.file}{RESET}"
+            f"{theme.bold('tau')} {theme.dim('v' + __version__)} {theme.dim('·')} "
+            f"{theme.model(self.session.provider.model)} {theme.dim('·')} "
+            f"{theme.dim(str(self.session.session_manager.file))}"
         )
         while True:
             try:
-                line = input(f"{CYAN}» {RESET}")
+                line = input(theme.accent("» "))
             except EOFError:
                 print()
                 break
             except KeyboardInterrupt:
-                print(f"{DIM}(use /quit to exit){RESET}")
+                print(theme.dim("(use /quit to exit)"))
                 continue
 
             line = line.strip()
@@ -149,9 +207,9 @@ class Repl:
                 continue
 
             self._submit(line)
-            self._print_usage()
 
     def _submit(self, text: str) -> None:
+        started = time.monotonic()
         try:
             self.session.prompt(text)
         except KeyboardInterrupt:
@@ -159,13 +217,21 @@ class Repl:
         finally:
             self._spinner.stop()  # e.g. Ctrl-C surfaced outside event handling
         print()  # blank line after each run
+        self._print_usage(time.monotonic() - started)
 
-    def _print_usage(self) -> None:
+    def _print_usage(self, elapsed: float | None = None) -> None:
         usage = self.session.usage
         if usage.total_tokens:
+            parts = [self.session.provider.model]
+            if elapsed is not None:
+                parts.append(format_duration(elapsed))
+            parts += [
+                f"{usage.input:,} in",
+                f"{usage.output:,} out",
+            ]
             print(
-                f"{DIM}⟨ {usage.input:,} in · {usage.output:,} out · "
-                f"{usage.total_tokens:,} total ⟩{RESET}"
+                self.theme.dim("⟨ " + " · ".join(parts) + " ⟩"),
+                flush=True,
             )
 
     # -- slash commands -------------------------------------------------------------
@@ -174,6 +240,7 @@ class Repl:
         """Handle a slash command. Returns True to exit."""
         parts = line.split(maxsplit=1)
         command, arg = parts[0].lower(), (parts[1].strip() if len(parts) > 1 else "")
+        theme = self.theme
 
         if command in ("/quit", "/exit"):
             return True
@@ -182,20 +249,29 @@ class Repl:
         elif command == "/model":
             if arg:
                 self.session.set_model(arg)
-            print(f"model: {self.session.provider.model}")
+            print(f"{theme.dim('model:')} {theme.model(self.session.provider.model)}")
         elif command == "/tools":
             for tool in self.session.tools.values():
                 first = tool.description.split(". ")[0]
-                print(f"  {BOLD}{tool.name}{RESET}: {first}")
+                print(f"  {theme.bold(tool.name)}{theme.dim(': ' + first)}")
         elif command == "/system":
             print(self.session.system_prompt)
+        elif command == "/plain":
+            self.markdown = not self.markdown
+            state = "on" if self.markdown else "off"
+            print(theme.dim(f"markdown rendering: {state}"))
+        elif command == "/thinking":
+            self.show_thinking = not self.show_thinking
+            state = "shown" if self.show_thinking else "hidden"
+            print(theme.dim(f"reasoning: {state}"))
         elif command == "/new":
             self.session.session_manager.new_session()
-            print(f"{DIM}new session: {self.session.session_manager.file}{RESET}")
+            print(theme.dim(f"new session: {self.session.session_manager.file}"))
         elif command == "/sessions":
             for i, path in enumerate(SessionManager.list_sessions(), 1):
                 marker = "→" if path == self.session.session_manager.file else " "
-                print(f"{marker} {i}. {path.stem}  {DIM}{path.parent.name}{RESET}")
+                marker = theme.accent(marker)
+                print(f"{marker} {i}. {path.stem}  {theme.dim(path.parent.name)}")
         elif command == "/resume":
             if not arg.isdigit():
                 print("usage: /resume <n>")
@@ -203,30 +279,25 @@ class Repl:
             sessions = SessionManager.list_sessions()
             index = int(arg) - 1
             if not 0 <= index < len(sessions):
-                print("no such session")
+                print(theme.error("no such session"))
                 return False
             self.session.session_manager.load(sessions[index])
-            print(f"{DIM}resumed {sessions[index]}{RESET}")
+            print(theme.dim(f"resumed {sessions[index]}"))
         elif command == "/usage":
             self._print_usage()
         else:
-            print(f"unknown command: {command} (try /help)")
-        return     False
-
-
-def _format_args(arguments: dict) -> str:
-    pieces = []
-    for key, value in arguments.items():
-        text = str(value)
-        if len(text) > 60:
-            text = text[:57] + "…"
-        text = text.replace("\n", "\\n")
-        pieces.append(f"{key}={text!r}")
-    return ", ".join(pieces)
+            print(
+                theme.error(f"unknown command: {command}")
+                + theme.dim(" (try /help)")
+            )
+        return False
 
 
 def print_mode(args: argparse.Namespace) -> None:
-    """Like `pi -p`: run one prompt, write the final response to stdout."""
+    """Like `pi -p`: run one prompt, write the final response to stdout.
+
+    Deliberately plain: no styling, no tool chatter, no spinners.
+    """
     session = make_session(args)
     unsubscribe = session.subscribe(
         lambda event: (
@@ -277,7 +348,6 @@ def main(argv: list[str] | None = None) -> None:
     repl = Repl(session)
     if args.prompt:
         repl._submit(args.prompt)
-        repl._print_usage()
     repl.run()
 
 
