@@ -6,8 +6,6 @@ shared with `stop()`, which erases the spinner line and restores the cursor
 before real output is printed. No-ops when stdout is not a TTY.
 """
 
-from __future__ import annotations
-
 import itertools
 import sys
 import threading

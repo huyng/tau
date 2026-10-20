@@ -1,7 +1,5 @@
 """Built-in tool set: read, bash, edit, write — modeled after pi's defaults."""
 
-from __future__ import annotations
-
 from .base import Tool, ToolResult
 from .bash import BashTool
 from .edit import EditTool, WriteTool

@@ -1,7 +1,5 @@
 """Provider tests, focused on DeepSeek thinking-mode compatibility."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 
 from tau.events import ReasoningDeltaEvent, TextDeltaEvent

@@ -9,11 +9,9 @@ If tool results require another model request, the agent starts another
 turn; otherwise the run ends.
 """
 
-from __future__ import annotations
-
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .events import (
     AgentEndEvent,

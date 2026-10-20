@@ -4,8 +4,6 @@ Like pi, tau builds the system prompt from base instructions and context
 files (AGENTS.md) discovered in the working directory and its ancestors.
 """
 
-from __future__ import annotations
-
 import os
 
 BASE_SYSTEM_PROMPT = """\

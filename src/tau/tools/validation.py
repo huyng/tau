@@ -14,8 +14,6 @@ on, because they produce silent nonsense downstream (e.g. iterating the
 characters of a string that was supposed to be a list).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 _ARTICLES = {"array": "an", "integer": "an", "object": "an"}

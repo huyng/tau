@@ -5,12 +5,10 @@ Timestamps are Unix milliseconds. Assistant messages contain content blocks
 tool call id, as in pi's transcript model.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Union
+from typing import Any
 
 
 def now_ms() -> int:
@@ -19,7 +17,6 @@ def now_ms() -> int:
 
 def new_id(prefix: str = "") -> str:
     return f"{prefix}{uuid.uuid4().hex[:12]}"
-
 
 # ---------------------------------------------------------------------------
 # Content blocks
@@ -40,7 +37,6 @@ class ToolCall:
 
     type: str = field(default="toolCall", init=False)
 
-
 # ---------------------------------------------------------------------------
 # Usage
 
@@ -51,11 +47,10 @@ class Usage:
     output: int = 0
     total_tokens: int = 0
 
-    def add(self, other: "Usage") -> None:
+    def add(self, other: Usage) -> None:
         self.input += other.input
         self.output += other.output
         self.total_tokens += other.total_tokens
-
 
 # ---------------------------------------------------------------------------
 # Messages
@@ -71,7 +66,7 @@ class UserMessage:
 
 @dataclass
 class AssistantMessage:
-    content: list[Union[TextContent, ToolCall]]
+    content: list[TextContent | ToolCall]
     model: str
     provider: str
 
@@ -104,8 +99,7 @@ class ToolResultMessage:
     timestamp: int = field(default_factory=now_ms, init=False)
 
 
-AgentMessage = Union[UserMessage, AssistantMessage, ToolResultMessage]
-
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage
 
 # ---------------------------------------------------------------------------
 # Serialization (session JSONL)
@@ -147,7 +141,7 @@ def deserialize_message(data: dict[str, Any]) -> AgentMessage:
     if role == "user":
         return UserMessage(content=data["content"])
     if role == "assistant":
-        content: list[Union[TextContent, ToolCall]] = []
+        content: list[TextContent | ToolCall] = []
         for block in data["content"]:
             if block["type"] == "text":
                 content.append(TextContent(text=block["text"]))

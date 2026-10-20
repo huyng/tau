@@ -11,26 +11,22 @@ consumes it like this:
     # stream.return_value holds the completed AssistantMessage
 """
 
-from __future__ import annotations
-
 import json
 import os
 import threading
-from typing import TYPE_CHECKING, Iterator
-
-if TYPE_CHECKING:
-    from .messages import AgentMessage
-    from .tools import Tool
+from collections.abc import Iterator
 
 from .events import ReasoningDeltaEvent, TextDeltaEvent, ToolNameEvent
 from .messages import (
+    AgentMessage,
     AssistantMessage,
     TextContent,
     ToolCall,
+    ToolResultMessage,
     Usage,
     UserMessage,
-    ToolResultMessage,
 )
+from .tools import Tool
 
 
 class OpenAIProvider:

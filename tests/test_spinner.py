@@ -1,7 +1,5 @@
 """Tests for the terminal spinner."""
 
-from __future__ import annotations
-
 import time
 
 from tau.spinner import ERASE_LINE, FRAMES, HIDE_CURSOR, SHOW_CURSOR, Spinner

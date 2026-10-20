@@ -6,7 +6,6 @@ next model request. The active leaf is recorded with pointer lines; only the
 last pointer in the file matters, which keeps the format append-only.
 """
 
-from __future__ import annotations
 
 import json
 import os
@@ -32,7 +31,7 @@ class SessionManager:
     # -- construction ----------------------------------------------------------
 
     @classmethod
-    def in_memory(cls) -> "SessionManager":
+    def in_memory(cls) -> SessionManager:
         """A session manager that never touches the filesystem."""
         manager = cls(directory=Path(".").anchor or Path("/tmp"))
         manager.in_memory = True

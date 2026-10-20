@@ -1,7 +1,5 @@
 """Tests for the tau agent harness using a scripted fake provider."""
 
-from __future__ import annotations
-
 import json
 
 import pytest

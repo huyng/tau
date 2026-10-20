@@ -1,8 +1,6 @@
 """Tests for the built-in tools: read, write, and the edit tool's
 offset-based application and unified-diff output."""
 
-from __future__ import annotations
-
 import pytest
 
 from tau.tools.edit import MAX_DIFF_LINES, EditTool, WriteTool
@@ -19,7 +17,6 @@ def write_file(tmp_path, name: str, content: str):
     path = tmp_path / name
     path.write_text(content)
     return path
-
 
 # -- edit: offset-based application ------------------------------------------
 
@@ -77,7 +74,7 @@ def test_ambiguous_match_is_rejected(tmp_path, edit):
 
 
 def test_missing_text_is_rejected(tmp_path, edit):
-    path = write_file(tmp_path, "f.txt", "hello\n")
+    write_file(tmp_path, "f.txt", "hello\n")
     result = edit.execute(path="f.txt", edits=[{"oldText": "goodbye", "newText": "hi"}])
     assert result.is_error
     assert "not found" in result.output
@@ -104,12 +101,11 @@ def test_missing_file_reports_error(tmp_path, edit):
     assert result.is_error
     assert "Error reading" in result.output
 
-
 # -- edit: diff output -------------------------------------------------------
 
 
 def test_result_leads_with_summary_then_diff(tmp_path, edit):
-    path = write_file(tmp_path, "f.txt", "one\ntwo\nthree\n")
+    write_file(tmp_path, "f.txt", "one\ntwo\nthree\n")
     result = edit.execute(path="f.txt", edits=[{"oldText": "two", "newText": "TWO"}])
 
     lines = result.output.splitlines()
@@ -155,7 +151,6 @@ def test_large_diff_is_truncated(tmp_path, edit):
     diff_lines = result.output.splitlines()
     assert len(diff_lines) <= MAX_DIFF_LINES + 3  # summary, blank, capped diff
 
-
 # -- write / read ------------------------------------------------------------
 
 
@@ -186,8 +181,8 @@ def test_read_rejects_binary(tmp_path):
     assert result.is_error
     assert "not a text file" in result.output
 
-
 # -- schema validation -------------------------------------------------------
+
 
 ECHO_SCHEMA = {
     "type": "object",

@@ -9,6 +9,8 @@ hundred lines of dependency-light Python.
 
 ## Install
 
+Requires Python 3.14+.
+
 ```bash
 cd tau
 python3 -m venv .venv && source .venv/bin/activate

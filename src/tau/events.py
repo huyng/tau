@@ -4,10 +4,7 @@ Subscribe with `AgentSession.subscribe(callback)` before prompting when the
 host needs streamed output.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Union
 
 from .messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
 
@@ -81,15 +78,15 @@ class ErrorEvent:
     message: str
 
 
-SessionEvent = Union[
-    AgentStartEvent,
-    MessageStartEvent,
-    TextDeltaEvent,
-    ReasoningDeltaEvent,
-    ToolNameEvent,
-    MessageEndEvent,
-    ToolExecutionStartEvent,
-    ToolExecutionEndEvent,
-    AgentEndEvent,
-    ErrorEvent,
-]
+SessionEvent = (
+    AgentStartEvent
+    | MessageStartEvent
+    | TextDeltaEvent
+    | ReasoningDeltaEvent
+    | ToolNameEvent
+    | MessageEndEvent
+    | ToolExecutionStartEvent
+    | ToolExecutionEndEvent
+    | AgentEndEvent
+    | ErrorEvent
+)

@@ -3,7 +3,7 @@ name = "tau"
 version = "0.1.0"
 description = "A minimal AI coding agent for the terminal, modeled after pi"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "openai>=1.50",

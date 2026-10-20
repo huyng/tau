@@ -1,8 +1,6 @@
 """Tool abstraction. A tool has a name, a description, a JSON schema for its
 parameters, and an execute method returning a ToolResult."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 

@@ -5,8 +5,6 @@ Modes:
 - print: `tau -p \"prompt\"` runs once and writes the final response
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 import sys
@@ -214,8 +212,6 @@ class Repl:
         else:
             print(f"unknown command: {command} (try /help)")
         return     False
-
-
 
 
 def _format_args(arguments: dict) -> str:
