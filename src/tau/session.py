@@ -9,6 +9,7 @@ last pointer in the file matters, which keeps the format append-only.
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,14 @@ from .messages import AgentMessage, deserialize_message, new_id, serialize_messa
 SESSIONS_DIR = Path(
     os.environ.get("TAU_SESSIONS_DIR", Path.home() / ".tau" / "sessions")
 )
+
+# The sessions directory is shared with other tools (notably the full tau CLI),
+# which lay their sessions out as `<cwd-slug>-<hash>/<uuid4>.jsonl` alongside an
+# `index.jsonl`. Only files this module itself writes are ours: a 12-hex id in a
+# YYYY-MM-DD directory. Anything else uses a different entry schema and would
+# load as an empty session, so it must not show up in the listing.
+SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class SessionManager:
@@ -81,11 +90,14 @@ class SessionManager:
         directory = directory if directory is not None else SESSIONS_DIR
         if not directory.is_dir():
             return []
-        return sorted(
-            (p for p in directory.glob("*/*.jsonl") if p.is_file()),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        sessions = [
+            p
+            for p in directory.glob("*/*.jsonl")
+            if p.is_file()
+            and DATE_DIR_RE.match(p.parent.name)
+            and SESSION_ID_RE.match(p.stem)
+        ]
+        return sorted(sessions, key=lambda p: p.stat().st_mtime, reverse=True)
 
     # -- writes ----------------------------------------------------------------
 

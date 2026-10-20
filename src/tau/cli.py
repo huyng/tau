@@ -9,6 +9,7 @@ import argparse
 import os
 import sys
 import time
+from datetime import datetime
 
 from . import __version__
 from .agent import AgentSession
@@ -299,7 +300,9 @@ class Repl:
             for i, path in enumerate(SessionManager.list_sessions(), 1):
                 marker = "→" if path == self.session.session_manager.file else " "
                 marker = theme.accent(marker)
-                print(f"{marker} {i}. {path.stem}  {theme.dim(path.parent.name)}")
+                stamp = datetime.fromtimestamp(path.stat().st_mtime)
+                when = stamp.strftime("%Y-%m-%d %H:%M")
+                print(f"{marker} {i}. {path.stem}  {theme.dim(when)}")
         elif command == "/resume":
             if not arg.isdigit():
                 print("usage: /resume <n>")
