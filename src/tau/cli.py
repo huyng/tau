@@ -15,6 +15,8 @@ from .agent import AgentSession
 from .events import (
     AgentEndEvent,
     AgentStartEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
     ErrorEvent,
     MessageEndEvent,
     MessageStartEvent,
@@ -48,6 +50,7 @@ HELP = """\
 /new               Start a new session
 /sessions          List recent sessions
 /resume <n>        Resume the n-th session from /sessions
+/compact           Summarize old turns now (automatic near the limit)
 /usage             Show cumulative token usage
 /quit              Exit (also Ctrl-D)
 """
@@ -154,6 +157,31 @@ class Repl:
             self._tool_line_open = False
         elif isinstance(event, ErrorEvent):
             print(self.theme.warning(event.message), file=sys.stderr, flush=True)
+        elif isinstance(event, CompactionStartEvent):
+            print(
+                self.theme.dim(
+                    f"compacting {event.messages} messages (~{event.tokens:,} tokens)…"
+                ),
+                flush=True,
+            )
+        elif isinstance(event, CompactionEndEvent):
+            if event.skipped:
+                print(
+                    self.theme.dim(
+                        "compaction skipped: the summary would not be smaller "
+                        "than the history it replaces"
+                    ),
+                    flush=True,
+                )
+                return
+            print(
+                self.theme.dim(
+                    f"compacted {event.messages} messages · "
+                    f"~{event.tokens_before:,} → ~{event.tokens_after:,} tokens · "
+                    "full history kept in the session file"
+                ),
+                flush=True,
+            )
         elif isinstance(event, AgentEndEvent):
             self._finish_reasoning()
             self._finish_text()
@@ -285,6 +313,9 @@ class Repl:
             print(theme.dim(f"resumed {sessions[index]}"))
         elif command == "/usage":
             self._print_usage()
+        elif command == "/compact":
+            if not self.session.compact():
+                print(theme.dim("nothing to compact (too few turns, or disabled)"))
         else:
             print(
                 theme.error(f"unknown command: {command}")

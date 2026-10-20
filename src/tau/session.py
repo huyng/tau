@@ -89,6 +89,18 @@ class SessionManager:
 
     # -- writes ----------------------------------------------------------------
 
+    def compact(self, summary: AgentMessage, keep: list[AgentMessage]) -> None:
+        """Re-root the active branch at `summary`, then replay `keep`.
+
+        Compaction is a *branch* operation, not a delete: the previous entries
+        stay in `self.entries` and in the JSONL file, so the full transcript
+        survives on disk. Only the active leaf moves.
+        """
+        self.current_id = None
+        self.append(summary)
+        for message in keep:
+            self.append(message)
+
     def append(self, message: AgentMessage) -> str:
         entry_id = new_id()
         entry = {

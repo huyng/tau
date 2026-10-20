@@ -85,7 +85,7 @@ tau --resume 2          # resume a previous session
 Slash commands inside the REPL:
 
 ```
-/help /model /tools /system /plain /thinking /new /sessions /resume /usage /quit
+/help /model /tools /system /plain /thinking /new /sessions /resume /compact /usage /quit
 ```
 
 Ctrl-C aborts the active run (steering between turns). Ctrl-D exits.
@@ -118,8 +118,42 @@ A session is tau's record of a conversation. The pieces mirror pi:
   supplies model context (pointer lines record the active leaf).
 - **System prompt** — base instructions plus the nearest `AGENTS.md`
   discovered from the working directory upward.
-- **Tools** — `read`, `bash`, `edit`, `write`, bound to the working
-  directory. Tools run with the permissions of the tau process.
+- **Tools** — `read`, `grep`, `glob`, `bash`, `edit`, `write`, `task`, bound
+  to the working directory. Tools run with the permissions of the tau process.
+- **Search** — `grep` and `glob` walk the tree in Python (no ripgrep
+  dependency), prune `.git`, `node_modules`, `.venv`, `__pycache__` and build
+  output, skip binaries, and cap their output, so a broad query cannot flood
+  the transcript. `grep` returns ripgrep-shaped `path:line: text` lines and
+  supports `glob` filters, context lines, and content/count/file modes.
+- **Sub-agents** — a `task` call runs a separate `AgentSession` with a fresh
+  history and a read-only tool set (`read`, `grep`, `glob`, `bash`). Only its
+  final report returns to the parent, so exploration does not accumulate in
+  the main context. Sub-agents share the parent's provider (and therefore
+  `/model`) and its abort flag.
+- **Compaction** — when the active branch passes a token threshold, the oldest
+  turns are summarized into one message and the most recent turns are kept
+  verbatim. Cuts land on user-message boundaries, so tool calls and their
+  results are never split apart. Compaction only moves the active leaf; the
+  original entries stay in the JSONL file.
+
+## Long sessions
+
+Compaction kicks in automatically, or on demand with `/compact`. The defaults
+suit a ~200k-token context window:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TAU_COMPACT` | `1` | Set to `0` to disable automatic compaction |
+| `TAU_COMPACT_THRESHOLD` | `100000` | Estimated tokens in the branch that trigger it |
+| `TAU_COMPACT_KEEP_TURNS` | `4` | Recent user turns kept verbatim |
+| `TAU_COMPACT_INPUT_TOKENS` | `30000` | Cap per summarization request (longer histories are folded in batches) |
+
+Lower the threshold when running a smaller-context model. Compaction is
+conservative: if the summary would not be smaller than the turns it replaces
+(short branches, or one huge tool result), it is skipped and the verbatim
+history is kept. Failures are non-fatal too — the summary request fails,
+history is left untouched, and the run continues. Neither case is retried
+within the same run.
 
 ## SDK usage
 
@@ -158,20 +192,22 @@ Pass `tools=[GitStatusTool(), ...]` to `create_agent_session`.
 
 ```
 src/tau/
-├── agent.py     # AgentSession: the agent loop
-├── cli.py       # interactive REPL + print mode
-├── events.py    # session lifecycle events
-├── messages.py  # message types (user, assistant, toolResult)
-├── prompts.py   # system prompt + AGENTS.md discovery
-├── provider.py  # streaming OpenAI-compatible runtime (DeepSeek/GLM ready)
-├── session.py   # JSONL session persistence (tree-shaped)
-└── tools/       # read, bash, edit, write
+├── agent.py       # AgentSession: the agent loop
+├── cli.py         # interactive REPL + print mode
+├── compaction.py  # summarize old turns when the branch gets long
+├── events.py      # session lifecycle events
+├── messages.py    # message types (user, assistant, toolResult)
+├── prompts.py     # system prompt + AGENTS.md discovery
+├── provider.py    # streaming OpenAI-compatible runtime (DeepSeek/GLM ready)
+├── session.py     # JSONL session persistence (tree-shaped)
+└── tools/         # read, grep, glob, bash, edit, write, task
 ```
 
 ## Not implemented (ideas for extension)
 
-Branching UI over the session tree, compaction of old messages, skills,
-prompt templates, extensions, MCP support, multi-line editor input.
+Branching UI over the session tree, parallel tool execution, diagnostics
+after edits, skills, prompt templates, extensions, MCP support, multi-line
+editor input.
 
 ## License
 

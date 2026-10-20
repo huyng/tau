@@ -78,6 +78,28 @@ class ErrorEvent:
     message: str
 
 
+@dataclass
+class CompactionStartEvent:
+    """The oldest turns are about to be summarized away."""
+
+    messages: int
+    tokens: int
+
+
+@dataclass
+class CompactionEndEvent:
+    """History was replaced by a summary; `messages` were dropped.
+
+    `skipped` is set when the summary would not have been smaller than the
+    history it replaced, in which case nothing was rewritten.
+    """
+
+    messages: int
+    tokens_before: int
+    tokens_after: int
+    skipped: bool = False
+
+
 # What a provider yields while streaming, before the turn is complete.
 ProviderEvent = TextDeltaEvent | ReasoningDeltaEvent | ToolNameEvent
 
@@ -92,4 +114,6 @@ SessionEvent = (
     | ToolExecutionEndEvent
     | AgentEndEvent
     | ErrorEvent
+    | CompactionStartEvent
+    | CompactionEndEvent
 )

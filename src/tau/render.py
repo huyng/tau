@@ -227,6 +227,28 @@ def summarize_tool_call(
     if name == "bash":
         return theme.dim(short(arg("command"), max(width - 10, 16)))
 
+    if name == "grep":
+        pattern = short(arg("pattern", "?"), max(width - 34, 12))
+        scope = arg("glob") or arg("path")
+        mode = arg("output_mode", "content")
+        suffix = "" if mode == "content" else f" [{mode}]"
+        return theme.dim(
+            f"/{pattern}/"
+            + (f" {short(scope, max(width - 46, 8))}" if scope else "")
+            + suffix
+        )
+
+    if name == "glob":
+        pattern = short(arg("pattern", "?"), max(width - 26, 12))
+        root = arg("path")
+        return theme.dim(
+            pattern + (f" in {short(root, max(width - 40, 8))}" if root else "")
+        )
+
+    if name == "task":
+        label = arg("description") or arg("prompt")
+        return theme.dim(short(label, max(width - 10, 16)))
+
     if name in ("edit", "write"):
         path = short(arg("path", "?"), max(width - 30, 12))
         if name == "edit":

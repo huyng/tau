@@ -13,9 +13,18 @@ import threading
 import time
 from collections.abc import Callable
 
+from .compaction import (
+    SUMMARY_PREFIX,
+    CompactionConfig,
+    estimate_tokens,
+    split_index,
+    summarize,
+)
 from .events import (
     AgentEndEvent,
     AgentStartEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
     ErrorEvent,
     MessageEndEvent,
     MessageStartEvent,
@@ -48,16 +57,26 @@ class AgentSession:
         session_manager: SessionManager,
         system_prompt: str,
         cwd: str | None = None,
+        abort_event: threading.Event | None = None,
+        compaction: CompactionConfig | None = None,
     ):
         self.provider = provider
         self.tools = {tool.name: tool for tool in tools}
         self.session_manager = session_manager
         self.system_prompt = system_prompt
         self.cwd = cwd
+        self.compaction = compaction if compaction is not None else CompactionConfig.from_env()
         self._subscribers: list[Callable] = []
-        self._abort_event = threading.Event()
+        # A shared event lets a parent and its sub-agents abort together.
+        self._abort_event = abort_event if abort_event is not None else threading.Event()
         self._busy = False
+        self._compaction_blocked = False
         self.usage = Usage()  # cumulative totals across runs
+
+        for tool in self.tools.values():
+            bind = getattr(tool, "bind_session", None)
+            if callable(bind):
+                bind(self)
 
         if session_manager.file is None:
             session_manager.new_session()
@@ -89,6 +108,11 @@ class AgentSession:
     def busy(self) -> bool:
         return self._busy
 
+    @property
+    def abort_event(self) -> threading.Event:
+        """The run's abort flag, shared with sub-agent sessions."""
+        return self._abort_event
+
     def last_assistant_text(self) -> str:
         for message in reversed(self.messages):
             if isinstance(message, AssistantMessage):
@@ -104,6 +128,7 @@ class AgentSession:
         """Run the agent loop for a user message. Resolves when the run ends."""
         self._abort_event.clear()
         self._busy = True
+        self._compaction_blocked = False
         self._emit(AgentStartEvent())
         self.session_manager.append(UserMessage(content=text))
 
@@ -111,6 +136,7 @@ class AgentSession:
         aborted = False
         try:
             while True:
+                self._maybe_compact()
                 assistant = self._run_turn()
                 if assistant is None or self._abort_event.is_set():
                     aborted = True
@@ -138,6 +164,70 @@ class AgentSession:
     def abort(self) -> None:
         """Stop the active run after the current provider chunk / tool call."""
         self._abort_event.set()
+
+    # -- compaction ------------------------------------------------------------
+
+    def _maybe_compact(self) -> bool:
+        """Compact before a turn if the branch is over the token threshold."""
+        if not self.compaction.enabled or self._compaction_blocked:
+            return False
+        if estimate_tokens(self.messages) < self.compaction.threshold_tokens:
+            return False
+        return self.compact()
+
+    def compact(self) -> bool:
+        """Summarize the oldest turns into one message. True if it compacted.
+
+        Failure is not fatal: history is left untouched and the run continues,
+        so a flaky summary request cannot lose the conversation. Either way
+        compaction is not attempted again during this run.
+        """
+        messages = self.messages
+        split = split_index(messages, self.compaction.keep_turns)
+        if split is None:
+            return False
+        older, keep = messages[:split], messages[split:]
+        tokens_before = estimate_tokens(messages)
+        self._emit(
+            CompactionStartEvent(messages=len(older), tokens=estimate_tokens(older))
+        )
+        try:
+            summary = summarize(
+                self.provider, older, self.compaction, self._abort_event, self.usage
+            )
+        except Exception as exc:
+            self._compaction_blocked = True
+            self._emit(ErrorEvent(message=f"compaction failed: {exc}"))
+            return False
+
+        summary_message = UserMessage(
+            content=f"{SUMMARY_PREFIX}\n{summary}\n</conversation_summary>"
+        )
+        tokens_after = estimate_tokens([summary_message, *keep])
+        if tokens_after >= tokens_before:
+            # A branch that is short, or mostly one huge tool result the model
+            # summarized at length, can summarize to something *bigger* than
+            # itself. Keep the verbatim history: it is strictly better.
+            self._compaction_blocked = True
+            self._emit(
+                CompactionEndEvent(
+                    messages=0,
+                    tokens_before=tokens_before,
+                    tokens_after=tokens_before,
+                    skipped=True,
+                )
+            )
+            return False
+
+        self.session_manager.compact(summary_message, keep)
+        self._emit(
+            CompactionEndEvent(
+                messages=len(older),
+                tokens_before=tokens_before,
+                tokens_after=tokens_after,
+            )
+        )
+        return True
 
     def dispose(self) -> None:
         self.abort()
