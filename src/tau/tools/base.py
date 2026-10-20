@@ -1,0 +1,33 @@
+"""Tool abstraction. A tool has a name, a description, a JSON schema for its
+parameters, and an execute method returning a ToolResult."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass
+class ToolResult:
+    output: str
+    is_error: bool = False
+
+
+class Tool(ABC):
+    name: str = ""
+    description: str = ""
+    parameters: dict = {"type": "object", "properties": {}}
+
+    @abstractmethod
+    def execute(self, **kwargs) -> ToolResult:
+        """Execute the tool with validated JSON-schema arguments."""
+
+    def schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }

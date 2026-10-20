@@ -1,0 +1,250 @@
+"""Tests for the built-in tools: read, write, and the edit tool's
+offset-based application and unified-diff output."""
+
+from __future__ import annotations
+
+import pytest
+
+from tau.tools.edit import MAX_DIFF_LINES, EditTool, WriteTool
+from tau.tools.read import ReadTool
+from tau.tools.validation import validate_arguments
+
+
+@pytest.fixture
+def edit(tmp_path):
+    return EditTool(cwd=str(tmp_path))
+
+
+def write_file(tmp_path, name: str, content: str):
+    path = tmp_path / name
+    path.write_text(content)
+    return path
+
+
+# -- edit: offset-based application ------------------------------------------
+
+
+def test_chained_edits_are_applied_to_the_original_text(tmp_path, edit):
+    """Regression: edits used to be applied sequentially to mutating content,
+    so an earlier replacement could be clobbered by a later oldText match."""
+    path = write_file(tmp_path, "f.txt", "A\nB\n")
+    result = edit.execute(path="f.txt", edits=[
+        {"oldText": "A", "newText": "B"},
+        {"oldText": "B", "newText": "C"},
+    ])
+    assert not result.is_error
+    assert path.read_text() == "B\nC\n"
+
+
+def test_independent_edits_apply_in_source_order(tmp_path, edit):
+    path = write_file(tmp_path, "f.py", "def one():\n    return 1\n\ndef two():\n    return 2\n")
+    result = edit.execute(path="f.py", edits=[
+        {"oldText": "return 2", "newText": "return 22"},
+        {"oldText": "return 1", "newText": "return 11"},
+    ])
+    assert not result.is_error
+    assert path.read_text() == "def one():\n    return 11\n\ndef two():\n    return 22\n"
+
+
+def test_edits_are_length_shifting_and_order_independent(tmp_path, edit):
+    """A long replacement must not shift a later match's resolved offsets."""
+    path = write_file(tmp_path, "f.txt", "start middle end")
+    result = edit.execute(path="f.txt", edits=[
+        {"oldText": "start", "newText": "start with a much longer prefix"},
+        {"oldText": "end", "newText": "finish"},
+    ])
+    assert not result.is_error
+    assert path.read_text() == "start with a much longer prefix middle finish"
+
+
+def test_overlapping_edits_are_rejected(tmp_path, edit):
+    path = write_file(tmp_path, "f.txt", "abcd")
+    result = edit.execute(path="f.txt", edits=[
+        {"oldText": "abc", "newText": "x"},
+        {"oldText": "bcd", "newText": "y"},
+    ])
+    assert result.is_error
+    assert "overlap" in result.output
+    assert path.read_text() == "abcd"  # untouched
+
+
+def test_ambiguous_match_is_rejected(tmp_path, edit):
+    path = write_file(tmp_path, "f.txt", "x = 1\ny = 1\n")
+    result = edit.execute(path="f.txt", edits=[{"oldText": "= 1", "newText": "= 2"}])
+    assert result.is_error
+    assert "matches 2 regions" in result.output
+    assert path.read_text() == "x = 1\ny = 1\n"
+
+
+def test_missing_text_is_rejected(tmp_path, edit):
+    path = write_file(tmp_path, "f.txt", "hello\n")
+    result = edit.execute(path="f.txt", edits=[{"oldText": "goodbye", "newText": "hi"}])
+    assert result.is_error
+    assert "not found" in result.output
+    assert "edits[0]" in result.output
+
+
+def test_empty_old_text_is_rejected(tmp_path, edit):
+    write_file(tmp_path, "f.txt", "hello\n")
+    result = edit.execute(path="f.txt", edits=[{"oldText": "", "newText": "x"}])
+    assert result.is_error
+    assert "empty" in result.output
+
+
+@pytest.mark.parametrize("edits", [[], "not-a-list", [{"oldText": "a"}], ["nope"]])
+def test_malformed_edits_are_rejected(tmp_path, edit, edits):
+    path = write_file(tmp_path, "f.txt", "abc\n")
+    result = edit.execute(path="f.txt", edits=edits)
+    assert result.is_error
+    assert path.read_text() == "abc\n"
+
+
+def test_missing_file_reports_error(tmp_path, edit):
+    result = edit.execute(path="nope.txt", edits=[{"oldText": "a", "newText": "b"}])
+    assert result.is_error
+    assert "Error reading" in result.output
+
+
+# -- edit: diff output -------------------------------------------------------
+
+
+def test_result_leads_with_summary_then_diff(tmp_path, edit):
+    path = write_file(tmp_path, "f.txt", "one\ntwo\nthree\n")
+    result = edit.execute(path="f.txt", edits=[{"oldText": "two", "newText": "TWO"}])
+
+    lines = result.output.splitlines()
+    assert lines[0] == "Edited f.txt (1 change)"  # REPL previews the first line
+    assert "--- a/f.txt" in result.output
+    assert "+++ b/f.txt" in result.output
+    assert "-two" in result.output
+    assert "+TWO" in result.output
+    assert "@@" in result.output
+
+
+def test_diff_uses_relative_path_for_files_under_cwd(tmp_path):
+    nested = tmp_path / "pkg" / "mod.py"
+    nested.parent.mkdir()
+    nested.write_text("x = 1\n")
+    EditTool(cwd=str(tmp_path)).execute(
+        path="pkg/mod.py", edits=[{"oldText": "x = 1", "newText": "x = 2"}]
+    )
+    # re-read via a second edit to inspect the label
+    result = EditTool(cwd=str(tmp_path)).execute(
+        path="pkg/mod.py", edits=[{"oldText": "x = 2", "newText": "x = 3"}]
+    )
+    assert "a/pkg/mod.py" in result.output
+    assert "+x = 3" in result.output
+
+
+def test_no_op_edit_omits_diff(tmp_path, edit):
+    write_file(tmp_path, "f.txt", "same\n")
+    result = edit.execute(path="f.txt", edits=[{"oldText": "same", "newText": "same"}])
+    assert not result.is_error
+    assert result.output == "Edited f.txt (1 change)"
+
+
+def test_large_diff_is_truncated(tmp_path, edit):
+    before = "\n".join(f"line {i}" for i in range(300)) + "\n"
+    after = "\n".join(f"changed {i}" for i in range(300)) + "\n"
+    write_file(tmp_path, "big.txt", before)
+
+    result = edit.execute(path="big.txt", edits=[{"oldText": before, "newText": after}])
+
+    assert not result.is_error
+    assert "diff truncated" in result.output
+    diff_lines = result.output.splitlines()
+    assert len(diff_lines) <= MAX_DIFF_LINES + 3  # summary, blank, capped diff
+
+
+# -- write / read ------------------------------------------------------------
+
+
+def test_write_creates_parent_directories(tmp_path):
+    result = WriteTool(cwd=str(tmp_path)).execute(
+        path="a/b/c.txt", content="hello"
+    )
+    assert not result.is_error
+    assert (tmp_path / "a" / "b" / "c.txt").read_text() == "hello"
+
+
+def test_write_overwrites(tmp_path):
+    path = write_file(tmp_path, "f.txt", "old content that is long")
+    WriteTool(cwd=str(tmp_path)).execute(path="f.txt", content="new")
+    assert path.read_text() == "new"
+
+
+def test_read_offset_and_limit(tmp_path):
+    write_file(tmp_path, "f.txt", "".join(f"{i}\n" for i in range(1, 11)))
+    result = ReadTool(cwd=str(tmp_path)).execute(path="f.txt", offset=3, limit=2)
+    assert result.output.startswith("3\n4\n")
+
+
+def test_read_rejects_binary(tmp_path):
+    path = tmp_path / "bin"
+    path.write_bytes(b"\x00\x01\x02")
+    result = ReadTool(cwd=str(tmp_path)).execute(path="bin")
+    assert result.is_error
+    assert "not a text file" in result.output
+
+
+# -- schema validation -------------------------------------------------------
+
+ECHO_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+}
+
+
+def test_validation_accepts_valid_arguments():
+    assert validate_arguments(ECHO_SCHEMA, {"text": "hi"}) == []
+
+
+def test_validation_reports_missing_required():
+    assert validate_arguments(ECHO_SCHEMA, {}) == ["arguments.text is required"]
+
+
+def test_validation_reports_wrong_type():
+    assert validate_arguments(ECHO_SCHEMA, {"text": 42}) == [
+        "arguments.text must be a string (got integer)"
+    ]
+
+
+def test_validation_treats_booleans_as_booleans_not_integers():
+    schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    assert validate_arguments(schema, {"n": True}) == [
+        "arguments.n must be an integer (got boolean)"
+    ]
+
+
+def test_validation_allows_float_for_number_but_not_integer():
+    number = {"type": "object", "properties": {"n": {"type": "number"}}}
+    integer = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    assert validate_arguments(number, {"n": 1.5}) == []
+    assert validate_arguments(integer, {"n": 1.5}) == [
+        "arguments.n must be an integer (got number)"
+    ]
+
+
+def test_validation_validates_array_items():
+    schema = EditTool.parameters
+    problems = validate_arguments(schema, {
+        "path": "f.txt",
+        "edits": [{"oldText": "a", "newText": "b"}, {"oldText": "c"}],
+    })
+    assert problems == ["arguments.edits[1].newText is required"]
+
+
+def test_validation_rejects_non_list_edits():
+    problems = validate_arguments(EditTool.parameters, {"path": "f.txt", "edits": "a"})
+    assert problems == ["arguments.edits must be an array (got string)"]
+
+
+def test_validation_ignores_unknown_properties():
+    assert validate_arguments(ECHO_SCHEMA, {"text": "ok", "extra": 1}) == []
+
+
+def test_validation_handles_non_object_arguments():
+    assert validate_arguments(ECHO_SCHEMA, "nope") == [
+        "arguments must be an object (got string)"
+    ]

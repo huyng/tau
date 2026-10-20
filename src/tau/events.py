@@ -1,0 +1,95 @@
+"""Session lifecycle events, modeled after pi's event stream.
+
+Subscribe with `AgentSession.subscribe(callback)` before prompting when the
+host needs streamed output.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Union
+
+from .messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+
+
+@dataclass
+class AgentStartEvent:
+    """A run began for the given user message."""
+
+
+@dataclass
+class MessageStartEvent:
+    """An assistant message began streaming (stop_reason is "pending")."""
+
+
+@dataclass
+class TextDeltaEvent:
+    """A chunk of assistant text streamed from the provider."""
+
+    delta: str
+
+
+@dataclass
+class ReasoningDeltaEvent:
+    """A chunk of model reasoning streamed from the provider (e.g. DeepSeek
+    or GLM reasoning_content). Persisted with the assistant message and sent
+    back on later requests, as DeepSeek requires when tools are present."""
+
+    delta: str
+
+
+@dataclass
+class ToolNameEvent:
+    """The name of a tool call became known while streaming."""
+
+    name: str
+
+
+@dataclass
+class MessageEndEvent:
+    """The authoritative completed assistant message for one turn."""
+
+    message: AssistantMessage
+
+
+@dataclass
+class ToolExecutionStartEvent:
+    """A tool call is about to execute."""
+
+    tool_call: ToolCall
+
+
+@dataclass
+class ToolExecutionEndEvent:
+    """A tool call finished with this result."""
+
+    tool_call: ToolCall
+    result: ToolResultMessage
+
+
+@dataclass
+class AgentEndEvent:
+    """The run finished. `aborted` is True if it was interrupted."""
+
+    aborted: bool
+
+
+@dataclass
+class ErrorEvent:
+    """A recoverable error occurred inside the run."""
+
+    message: str
+
+
+SessionEvent = Union[
+    AgentStartEvent,
+    MessageStartEvent,
+    TextDeltaEvent,
+    ReasoningDeltaEvent,
+    ToolNameEvent,
+    MessageEndEvent,
+    ToolExecutionStartEvent,
+    ToolExecutionEndEvent,
+    AgentEndEvent,
+    ErrorEvent,
+]

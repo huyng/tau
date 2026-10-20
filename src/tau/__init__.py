@@ -1,0 +1,47 @@
+"""tau: a minimal Python coding agent harness, modeled after pi.
+
+Exposes an SDK-style factory, mirroring pi's `createAgentSession()`:
+
+    from tau import create_agent_session
+
+    session = create_agent_session()
+    session.prompt("What files are in the current directory?")
+    print(session.last_assistant_text())
+    session.dispose()
+"""
+
+from .agent import AgentSession
+from .session import SessionManager
+
+__version__ = "0.1.0"
+
+__all__ = ["AgentSession", "SessionManager", "create_agent_session"]
+
+
+def create_agent_session(
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    cwd: str | None = None,
+    tools=None,
+    persistent: bool = True,
+) -> AgentSession:
+    """Create an agent session with sensible defaults.
+
+    Mirrors pi's SDK factory: each boundary (model runtime, tools, session
+    persistence, system prompt) can be supplied explicitly, or defaults are
+    used.
+    """
+    from .prompts import build_system_prompt
+    from .provider import OpenAIProvider
+    from .tools import default_tools
+
+    provider = OpenAIProvider(model=model, base_url=base_url, api_key=api_key)
+    session_manager = SessionManager() if persistent else SessionManager.in_memory()
+    return AgentSession(
+        provider=provider,
+        tools=tools if tools is not None else default_tools(),
+        session_manager=session_manager,
+        system_prompt=build_system_prompt(cwd),
+        cwd=cwd,
+    )
