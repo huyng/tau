@@ -8,7 +8,8 @@ consumes it like this:
     stream = provider.stream(system_prompt, messages, tools)
     for event in stream:
         ...  # TextDeltaEvent / ToolNameEvent
-    # stream.return_value holds the completed AssistantMessage
+    # The completed AssistantMessage is the generator's return value
+    # (StopIteration.value).
 """
 
 import json

@@ -1,4 +1,3 @@
-import os
 import subprocess
 from typing import Any
 
@@ -17,7 +16,7 @@ class BashTool(Tool):
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "Shell command to execute"},
-            "timeout": {"type": "number", "description": "Timeout in seconds (optional)"},
+            "timeout": {"type": "integer", "description": "Timeout in seconds (optional)"},
         },
         "required": ["command"],
     }
@@ -25,8 +24,10 @@ class BashTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, command: str, timeout: float | None = None,  # type: ignore[override]
-                **_: Any) -> ToolResult:
+    def execute(
+        self, command: str, timeout: int | None = None, **_: Any
+    ) -> ToolResult:
+        timeout_seconds = timeout or 120
         try:
             proc = subprocess.run(
                 command,
@@ -34,10 +35,12 @@ class BashTool(Tool):
                 cwd=self.cwd,
                 capture_output=True,
                 text=True,
-                timeout=int(timeout) if timeout else 120,
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired:
-            return ToolResult(f"Error: command timed out after {int(timeout or 120)}s", is_error=True)
+            return ToolResult(
+                f"Error: command timed out after {timeout_seconds}s", is_error=True
+            )
 
         output = ""
         if proc.stdout:

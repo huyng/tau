@@ -4,7 +4,7 @@ offset-based application and unified-diff output."""
 import pytest
 
 from tau.tools.edit import MAX_DIFF_LINES, EditTool, WriteTool
-from tau.tools.read import ReadTool
+from tau.tools.read import MAX_LINES, ReadTool
 from tau.tools.validation import validate_arguments
 
 
@@ -172,6 +172,19 @@ def test_read_offset_and_limit(tmp_path):
     write_file(tmp_path, "f.txt", "".join(f"{i}\n" for i in range(1, 11)))
     result = ReadTool(cwd=str(tmp_path)).execute(path="f.txt", offset=3, limit=2)
     assert result.output.startswith("3\n4\n")
+
+
+def test_read_enforces_the_documented_line_cap(tmp_path):
+    write_file(
+        tmp_path,
+        "f.txt",
+        "".join(f"{i}\n" for i in range(1, MAX_LINES + 3)),
+    )
+    result = ReadTool(cwd=str(tmp_path)).execute(path="f.txt")
+
+    assert result.output.startswith("1\n2\n")
+    assert "... (2 more lines)" in result.output
+    assert f"{MAX_LINES + 1}\n" not in result.output
 
 
 def test_read_rejects_binary(tmp_path):

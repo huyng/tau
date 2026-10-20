@@ -44,10 +44,6 @@ class MarkdownRenderer:
         self._fence_marker = ""
         self._fence_lang = ""
 
-    @property
-    def at_line_start(self) -> bool:
-        return not self._open_line
-
     def feed(self, delta: str) -> str:
         """Consume a streamed chunk and return the text ready to print."""
         self._buffer += delta
@@ -331,7 +327,9 @@ def render_tool_result(
         return (
             theme.dim("╰─ ")
             + theme.success("✓")
-            + theme.dim(f" {format_duration(elapsed)} · {count} lines")
+            + theme.dim(" ")
+            + duration
+            + theme.dim(f" · {count} lines")
         )
 
     if name == "bash":
@@ -388,15 +386,15 @@ def colorize_diff_line(theme: Theme, line: str) -> str:
         return theme.paint(line, GREEN)
     if line.startswith("-"):
         return theme.paint(line, RED)
-    if line.startswith("..."):
-        return theme.dim(line)
     return theme.dim(line)
 
 
 def _as_int(value: object) -> int | None:
+    if not isinstance(value, (int, float, str)):
+        return None
     try:
-        return int(value) if value is not None else None  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        return int(value)
+    except ValueError:
         return None
 
 

@@ -10,7 +10,6 @@ turn; otherwise the run ends.
 """
 
 import threading
-import time
 from collections.abc import Callable
 
 from .compaction import (
@@ -28,10 +27,8 @@ from .events import (
     ErrorEvent,
     MessageEndEvent,
     MessageStartEvent,
-    TextDeltaEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
-    ToolNameEvent,
 )
 from .messages import (
     AgentMessage,
@@ -171,11 +168,12 @@ class AgentSession:
         """Compact before a turn if the branch is over the token threshold."""
         if not self.compaction.enabled or self._compaction_blocked:
             return False
-        if estimate_tokens(self.messages) < self.compaction.threshold_tokens:
+        tokens = estimate_tokens(self.messages)
+        if tokens < self.compaction.threshold_tokens:
             return False
-        return self.compact()
+        return self.compact(tokens)
 
-    def compact(self) -> bool:
+    def compact(self, tokens_before: int | None = None) -> bool:
         """Summarize the oldest turns into one message. True if it compacted.
 
         Failure is not fatal: history is left untouched and the run continues,
@@ -187,7 +185,8 @@ class AgentSession:
         if split is None:
             return False
         older, keep = messages[:split], messages[split:]
-        tokens_before = estimate_tokens(messages)
+        if tokens_before is None:
+            tokens_before = estimate_tokens(messages)
         self._emit(
             CompactionStartEvent(messages=len(older), tokens=estimate_tokens(older))
         )
@@ -261,13 +260,13 @@ class AgentSession:
                 self.session_manager.append(assistant)
                 self._emit(MessageEndEvent(message=assistant))
                 return assistant
-            except KeyboardInterrupt:
-                raise
             except Exception as exc:  # transient provider failures
                 last_error = exc
                 if attempt < MAX_RETRIES - 1:
-                    self._emit(ErrorEvent(message=f"{exc}; retrying in {RETRY_DELAYS[attempt]}s"))
-                    time.sleep(RETRY_DELAYS[attempt])
+                    delay = RETRY_DELAYS[attempt]
+                    self._emit(ErrorEvent(message=f"{exc}; retrying in {delay}s"))
+                    if self._abort_event.wait(delay):
+                        return None
         error = AssistantMessage(
             content=[],
             model=self.provider.model,

@@ -157,7 +157,7 @@ class GrepTool(Tool):
                 ),
             },
             "context": {
-                "type": "number",
+                "type": "integer",
                 "description": "Lines of context to show before and after each match (default 0)",
             },
             "ignore_case": {
@@ -165,7 +165,7 @@ class GrepTool(Tool):
                 "description": "Case-insensitive search (default false)",
             },
             "head_limit": {
-                "type": "number",
+                "type": "integer",
                 "description": f"Maximum output lines (default {DEFAULT_HEAD_LIMIT})",
             },
         },
@@ -175,15 +175,15 @@ class GrepTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         pattern: str,
         path: str | None = None,
         glob: str | None = None,
         output_mode: str = "content",
-        context: float | None = None,
+        context: int | None = None,
         ignore_case: bool = False,
-        head_limit: float | None = None,
+        head_limit: int | None = None,
         **_: Any,
     ) -> ToolResult:
         try:
@@ -197,8 +197,8 @@ class GrepTool(Tool):
             return ToolResult(f"Error: no such path: {shown_root}", is_error=True)
 
         mode = output_mode if output_mode in _MODES else "content"
-        context_lines = max(int(context or 0), 0)
-        limit = max(int(head_limit or DEFAULT_HEAD_LIMIT), 1)
+        context_lines = max(context or 0, 0)
+        limit = max(head_limit or DEFAULT_HEAD_LIMIT, 1)
 
         files: Iterator[Path] = (
             iter([root]) if root.is_file() else _iter_files(root, glob or None)
@@ -265,7 +265,7 @@ class GlobTool(Tool):
                 "description": "Directory to search in (default: working directory)",
             },
             "limit": {
-                "type": "number",
+                "type": "integer",
                 "description": f"Maximum number of paths (default {DEFAULT_GLOB_LIMIT})",
             },
         },
@@ -275,11 +275,11 @@ class GlobTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(  # type: ignore[override]
+    def execute(
         self,
         pattern: str,
         path: str | None = None,
-        limit: float | None = None,
+        limit: int | None = None,
         **_: Any,
     ) -> ToolResult:
         root = _resolve(path, self.cwd)
@@ -287,7 +287,7 @@ class GlobTool(Tool):
         if not root.exists():
             return ToolResult(f"Error: no such path: {shown_root}", is_error=True)
 
-        limit_count = max(int(limit or DEFAULT_GLOB_LIMIT), 1)
+        limit_count = max(limit or DEFAULT_GLOB_LIMIT, 1)
         found = (
             [root] if root.is_file()
             else list(_iter_files(root, pattern))

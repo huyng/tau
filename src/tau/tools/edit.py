@@ -85,7 +85,7 @@ def _unified_diff(before: str, after: str, name: str) -> str:
 
 
 class EditTool(Tool):
-    name= "edit"
+    name = "edit"
     description = (
         "Edit a single file using exact text replacement. Every edits[].oldText "
         "must match a unique, non-overlapping region of the original file. Do "
@@ -115,7 +115,7 @@ class EditTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, path: str, edits: list[dict], **_: Any) -> ToolResult:  # type: ignore[override]
+    def execute(self, path: str, edits: list[dict], **_: Any) -> ToolResult:
         path = os.path.expanduser(path)
         if not os.path.isabs(path) and self.cwd:
             path = os.path.join(self.cwd, path)
@@ -210,7 +210,7 @@ class WriteTool(Tool):
     def __init__(self, cwd: str | None = None):
         self.cwd = cwd
 
-    def execute(self, path: str, content: str, **_: Any) -> ToolResult:  # type: ignore[override]
+    def execute(self, path: str, content: str, **_: Any) -> ToolResult:
         path = os.path.expanduser(path)
         if not os.path.isabs(path) and self.cwd:
             path = os.path.join(self.cwd, path)

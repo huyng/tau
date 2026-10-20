@@ -15,8 +15,9 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def new_id(prefix: str = "") -> str:
-    return f"{prefix}{uuid.uuid4().hex[:12]}"
+def new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
 
 # ---------------------------------------------------------------------------
 # Content blocks

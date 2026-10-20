@@ -15,12 +15,10 @@ import sys
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
 DIM = "\x1b[2m"
-ITALIC = "\x1b[3m"
 
 RED = "\x1b[31m"
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
-BLUE = "\x1b[34m"
 MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 
@@ -43,9 +41,6 @@ class Theme:
 
     def dim(self, text: str) -> str:
         return self.paint(text, DIM)
-
-    def italic(self, text: str) -> str:
-        return self.paint(text, ITALIC)
 
     def accent(self, text: str) -> str:
         return self.paint(text, CYAN)
@@ -73,9 +68,6 @@ class Theme:
 
     def remove(self, text: str) -> str:
         return self.paint(text, RED)
-
-    def hunk(self, text: str) -> str:
-        return self.paint(text, CYAN)
 
 
 def color_enabled(stream=None) -> bool:

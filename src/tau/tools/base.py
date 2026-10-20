@@ -21,18 +21,6 @@ class Tool(ABC):
     def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool with validated JSON-schema arguments.
 
-        Subclasses narrow this to the arguments they need, which is
-        deliberately incompatible with this signature (callers dispatch with
-        arbitrary ``**arguments`` from the model), so each override carries
-        ``# type: ignore[override]``.
+        Subclasses narrow this to the arguments they need; callers dispatch
+        with arbitrary ``**arguments`` from the model.
         """
-
-    def schema(self) -> dict:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
-        }

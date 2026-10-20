@@ -6,7 +6,6 @@ next model request. The active leaf is recorded with pointer lines; only the
 last pointer in the file matters, which keeps the format append-only.
 """
 
-
 import json
 import os
 import re
@@ -57,10 +56,15 @@ class SessionManager:
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # a truncated final line must not lose the session
+                if not isinstance(data, dict):
+                    continue
                 if "current" in data:
                     self.current_id = data["current"]
-                else:
+                elif "id" in data and "message" in data:
                     self.entries[data["id"]] = data
 
     # -- queries ---------------------------------------------------------------
@@ -70,20 +74,13 @@ class SessionManager:
         branch: list[AgentMessage] = []
         entry_id = self.current_id
         while entry_id is not None:
-            entry = self.entries[entry_id]
+            entry = self.entries.get(entry_id)
+            if entry is None:
+                break
             branch.append(deserialize_message(entry["message"]))
-            entry_id = entry["parent"]
+            entry_id = entry.get("parent")
         branch.reverse()
         return branch
-
-    @property
-    def title(self) -> str:
-        for message in self.active_branch():
-            data = serialize_message(message)
-            if data["role"] == "user":
-                text = data["content"].replace("\n", " ")
-                return text[:60] + ("…" if len(text) > 60 else "")
-        return "(empty session)"
 
     @staticmethod
     def list_sessions(directory: Path | None = None) -> list[Path]:

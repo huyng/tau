@@ -9,6 +9,7 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 from . import __version__
@@ -85,7 +86,6 @@ class Repl:
         self.show_thinking = True
 
         self.session.subscribe(self._on_event)
-        self._tool_line_open = False
         self._text_started = False
         self._text_ends_newline = False
         self._reasoning_started = False
@@ -93,101 +93,131 @@ class Repl:
         self._reasoning = GutterWriter(self.theme, style=DIM)
         self._tool_started: dict[str, float] = {}
         self._spinner = Spinner()
+        self._handlers: dict[type, Callable[..., None]] = {
+            AgentStartEvent: self._on_agent_start,
+            MessageStartEvent: self._on_message_start,
+            ReasoningDeltaEvent: self._on_reasoning_delta,
+            TextDeltaEvent: self._on_text_delta,
+            ToolNameEvent: self._on_tool_name,
+            MessageEndEvent: self._on_message_end,
+            ToolExecutionStartEvent: self._on_tool_start,
+            ToolExecutionEndEvent: self._on_tool_end,
+            ErrorEvent: self._on_error,
+            CompactionStartEvent: self._on_compaction_start,
+            CompactionEndEvent: self._on_compaction_end,
+            AgentEndEvent: self._on_agent_end,
+        }
 
     # -- event rendering ---------------------------------------------------------
 
     def _on_event(self, event) -> None:
-        if isinstance(event, MessageStartEvent):
-            self._text_started = False
-            self._text_ends_newline = False
-            self._reasoning_started = False
-            self._renderer = MarkdownRenderer(self.theme, self.width)
-            self._reasoning = GutterWriter(self.theme, style=DIM)
-            self._spinner.start(f"{self.session.provider.model} · thinking")
-            return
-        if isinstance(event, (AgentStartEvent, ToolNameEvent)):
-            return
+        handler = self._handlers.get(type(event))
+        if handler is not None:
+            handler(event)
 
-        # Every remaining event can produce output: retire the spinner first.
+    def _on_agent_start(self, _event: AgentStartEvent) -> None:
+        pass
+
+    def _on_tool_name(self, _event: ToolNameEvent) -> None:
+        pass
+
+    def _on_message_start(self, _event: MessageStartEvent) -> None:
+        self._text_started = False
+        self._text_ends_newline = False
+        self._reasoning_started = False
+        self._renderer = MarkdownRenderer(self.theme, self.width)
+        self._reasoning = GutterWriter(self.theme, style=DIM)
+        self._spinner.start(f"{self.session.provider.model} · thinking")
+
+    def _on_reasoning_delta(self, event: ReasoningDeltaEvent) -> None:
         self._spinner.stop()
+        if self.show_thinking:
+            print(self._reasoning.feed(event.delta), end="", flush=True)
+            self._reasoning_started = True
 
-        if isinstance(event, ReasoningDeltaEvent):
-            if self.show_thinking:
-                print(self._reasoning.feed(event.delta), end="", flush=True)
-                self._reasoning_started = True
-        elif isinstance(event, TextDeltaEvent):
-            self._finish_reasoning()
-            self._text_started = True
-            self._text_ends_newline = event.delta.endswith("\n")
-            if self.markdown:
-                print(self._renderer.feed(event.delta), end="", flush=True)
-            else:
-                print(event.delta, end="", flush=True)
-        elif isinstance(event, MessageEndEvent):
-            self._finish_reasoning()
-            self._finish_text(event.message.text)
-        elif isinstance(event, ToolExecutionStartEvent):
-            self._finish_reasoning()
-            self._finish_text()
-            call = event.tool_call
-            summary = summarize_tool_call(
-                self.theme, call.name, call.arguments, self.width
-            )
-            self._close_tool_line()
-            head = self.theme.dim("╭─ ") + self.theme.bold(call.name)
-            if summary:
-                head += " " + summary
-            print(head, flush=True)
-            self._tool_line_open = True
-            self._tool_started[call.id] = time.monotonic()
-            self._spinner.start(f"{call.name} …")
-        elif isinstance(event, ToolExecutionEndEvent):
-            started = self._tool_started.pop(event.tool_call.id, None)
-            elapsed = time.monotonic() - started if started is not None else 0.0
-            print(
-                render_tool_result(
-                    self.theme,
-                    event.tool_call.name,
-                    event.result.output,
-                    event.result.is_error,
-                    elapsed,
-                    self.width,
-                ),
-                flush=True,
-            )
-            self._tool_line_open = False
-        elif isinstance(event, ErrorEvent):
-            print(self.theme.warning(event.message), file=sys.stderr, flush=True)
-        elif isinstance(event, CompactionStartEvent):
-            print(
-                self.theme.dim(
-                    f"compacting {event.messages} messages (~{event.tokens:,} tokens)…"
-                ),
-                flush=True,
-            )
-        elif isinstance(event, CompactionEndEvent):
-            if event.skipped:
-                print(
-                    self.theme.dim(
-                        "compaction skipped: the summary would not be smaller "
-                        "than the history it replaces"
-                    ),
-                    flush=True,
-                )
-                return
+    def _on_text_delta(self, event: TextDeltaEvent) -> None:
+        self._spinner.stop()
+        self._finish_reasoning()
+        self._text_started = True
+        self._text_ends_newline = event.delta.endswith("\n")
+        if self.markdown:
+            print(self._renderer.feed(event.delta), end="", flush=True)
+        else:
+            print(event.delta, end="", flush=True)
+
+    def _on_message_end(self, event: MessageEndEvent) -> None:
+        self._spinner.stop()
+        self._finish_reasoning()
+        self._finish_text(event.message.text)
+
+    def _on_tool_start(self, event: ToolExecutionStartEvent) -> None:
+        self._spinner.stop()
+        self._finish_reasoning()
+        self._finish_text()
+        call = event.tool_call
+        summary = summarize_tool_call(self.theme, call.name, call.arguments, self.width)
+        head = self.theme.dim("╭─ ") + self.theme.bold(call.name)
+        if summary:
+            head += " " + summary
+        print(head, flush=True)
+        self._tool_started[call.id] = time.monotonic()
+        self._spinner.start(f"{call.name} …")
+
+    def _on_tool_end(self, event: ToolExecutionEndEvent) -> None:
+        self._spinner.stop()
+        started = self._tool_started.pop(event.tool_call.id, None)
+        elapsed = time.monotonic() - started if started is not None else 0.0
+        print(
+            render_tool_result(
+                self.theme,
+                event.tool_call.name,
+                event.result.output,
+                event.result.is_error,
+                elapsed,
+                self.width,
+            ),
+            flush=True,
+        )
+
+    def _on_error(self, event: ErrorEvent) -> None:
+        self._spinner.stop()
+        print(self.theme.warning(event.message), file=sys.stderr, flush=True)
+
+    def _on_compaction_start(self, event: CompactionStartEvent) -> None:
+        self._spinner.stop()
+        print(
+            self.theme.dim(
+                f"compacting {event.messages} messages (~{event.tokens:,} tokens)…"
+            ),
+            flush=True,
+        )
+
+    def _on_compaction_end(self, event: CompactionEndEvent) -> None:
+        self._spinner.stop()
+        if event.skipped:
             print(
                 self.theme.dim(
-                    f"compacted {event.messages} messages · "
-                    f"~{event.tokens_before:,} → ~{event.tokens_after:,} tokens · "
-                    "full history kept in the session file"
+                    "compaction skipped: the summary would not be smaller "
+                    "than the history it replaces"
                 ),
                 flush=True,
             )
-        elif isinstance(event, AgentEndEvent):
-            self._finish_reasoning()
-            self._finish_text()
-            if event.aborted:
-                print(self.theme.warning("[aborted]"), flush=True)
+            return
+        print(
+            self.theme.dim(
+                f"compacted {event.messages} messages · "
+                f"~{event.tokens_before:,} → ~{event.tokens_after:,} tokens · "
+                "full history kept in the session file"
+            ),
+            flush=True,
+        )
+
+    def _on_agent_end(self, event: AgentEndEvent) -> None:
+        self._spinner.stop()
+        self._finish_reasoning()
+        self._finish_text()
+        if event.aborted:
+            print(self.theme.warning("[aborted]"), flush=True)
 
     def _finish_reasoning(self) -> None:
         if self._reasoning_started:
@@ -204,9 +234,6 @@ class Repl:
             if not ended:
                 print(flush=True)
         self._text_started = False
-
-    def _close_tool_line(self) -> None:
-        self._tool_line_open = False
 
     # -- main loop ----------------------------------------------------------------
 
@@ -333,13 +360,12 @@ def print_mode(args: argparse.Namespace) -> None:
     Deliberately plain: no styling, no tool chatter, no spinners.
     """
     session = make_session(args)
-    unsubscribe = session.subscribe(
-        lambda event: (
+
+    def on_event(event) -> None:
+        if isinstance(event, TextDeltaEvent):
             print(event.delta, end="", flush=True)
-            if isinstance(event, TextDeltaEvent)
-            else None
-        )
-    )
+
+    unsubscribe = session.subscribe(on_event)
     try:
         session.prompt(args.prompt)
     finally:
@@ -359,7 +385,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     try:
-        import openai  # noqa: F401
+        from openai import OpenAIError
     except ImportError:
         sys.exit("tau requires the openai package: pip install openai")
 
@@ -371,13 +397,11 @@ def main(argv: list[str] | None = None) -> None:
             return
 
         session = make_session(args)
-    except Exception as exc:
-        if type(exc).__name__ == "OpenAIError":
-            sys.exit(
-                f"Missing credentials. Set OPENAI_API_KEY (or TAU_API_KEY),\n"
-                f"or pass --api-key / --base-url for an OpenAI-compatible endpoint."
-            )
-        raise
+    except OpenAIError:
+        sys.exit(
+            "Missing credentials. Set OPENAI_API_KEY (or TAU_API_KEY),\n"
+            "or pass --api-key / --base-url for an OpenAI-compatible endpoint."
+        )
 
     repl = Repl(session)
     if args.prompt:

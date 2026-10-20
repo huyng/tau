@@ -80,7 +80,7 @@ class TaskTool(Tool):
         """
         self._parent = session
 
-    def execute(  # type: ignore[override]
+    def execute(
         self, prompt: str, description: str = "", **_: Any
     ) -> ToolResult:
         if self._parent is None:

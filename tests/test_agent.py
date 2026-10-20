@@ -9,6 +9,7 @@ from tau.agent import AgentSession
 from tau.events import (
     AgentEndEvent,
     AgentStartEvent,
+    ErrorEvent,
     MessageEndEvent,
     TextDeltaEvent,
     ToolExecutionEndEvent,
@@ -55,7 +56,7 @@ class EchoTool(Tool):
     def __init__(self):
         self.calls: list[dict] = []
 
-    def execute(self, text: str, **_: Any) -> ToolResult:  # type: ignore[override]
+    def execute(self, text: str, **_: Any) -> ToolResult:
         self.calls.append({"text": text})
         return ToolResult(output=f"echo: {text}")
 
@@ -238,6 +239,37 @@ def test_abort_prevents_tool_execution(tmp_path):
     assert tool.calls == []  # but tools never ran
     last = session.messages[-1]
     assert isinstance(last, AssistantMessage)  # no tool result was appended
+
+
+def test_abort_during_retry_stops_without_another_request(tmp_path):
+    class FailingProvider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    provider = FailingProvider()
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+
+    def abort_on_error(event):
+        if isinstance(event, ErrorEvent):
+            session.abort()
+
+    session.subscribe(abort_on_error)
+    final = session.prompt("hi")
+
+    assert final.stop_reason == "aborted"
+    assert provider.calls == 1
 
 
 def test_repl_renders_text_and_reasoning_deltas(capsys):

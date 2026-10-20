@@ -6,7 +6,7 @@ host needs streamed output.
 
 from dataclasses import dataclass
 
-from .messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+from .messages import AssistantMessage, ToolCall, ToolResultMessage
 
 
 @dataclass
