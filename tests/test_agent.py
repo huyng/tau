@@ -16,6 +16,7 @@ from tau.events import (
     ToolExecutionStartEvent,
 )
 from tau.messages import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
+from tau.provider import ProviderError
 from tau.session import SessionManager
 from tau.tools import Tool, ToolResult
 
@@ -270,6 +271,125 @@ def test_abort_during_retry_stops_without_another_request(tmp_path):
 
     assert final.stop_reason == "aborted"
     assert provider.calls == 1
+
+
+def test_permanent_error_is_not_retried(tmp_path):
+    """A 401 must fail once, immediately — not three times over 3 seconds."""
+
+    class UnauthorizedProvider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.calls += 1
+            raise ProviderError("HTTP 401 Unauthorized: bad api key", retryable=False)
+
+    provider = UnauthorizedProvider()
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+    errors: list[str] = []
+    session.subscribe(
+        lambda event: errors.append(event.message) if isinstance(event, ErrorEvent) else None
+    )
+
+    final = session.prompt("hi")
+
+    assert provider.calls == 1
+    assert final.stop_reason == "error"
+    assert "401" in (final.error_message or "")
+    # One error event only: no "retrying in Ns" chatter for a permanent fault.
+    assert errors == ["HTTP 401 Unauthorized: bad api key"]
+
+
+def test_transient_error_is_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr("tau.agent.RETRY_DELAYS", (0, 0, 0))
+
+    class FlakyProvider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.calls += 1
+            raise ProviderError("HTTP 503 Service Unavailable")
+
+    provider = FlakyProvider()
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+
+    final = session.prompt("hi")
+
+    assert provider.calls == 3
+    assert final.stop_reason == "error"
+    assert "503" in (final.error_message or "")
+
+
+def failing_provider(reason):
+    class Provider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.calls += 1
+            message = AssistantMessage(
+                content=[],
+                model="fake-model",
+                provider="fake",
+                stop_reason="error",
+                error_message=reason,
+            )
+
+            def gen():
+                return message
+                yield  # pragma: no cover - keeps this a generator
+
+            return gen()
+
+    return Provider()
+
+
+def test_content_filter_is_not_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr("tau.agent.RETRY_DELAYS", (0, 0, 0))
+    provider = failing_provider("content_filter")
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+
+    assert session.prompt("hi").stop_reason == "error"
+    assert provider.calls == 1
+
+
+def test_server_overload_is_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr("tau.agent.RETRY_DELAYS", (0, 0, 0))
+    provider = failing_provider("insufficient_system_resource")
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+
+    assert session.prompt("hi").stop_reason == "error"
+    assert provider.calls == 3
 
 
 def test_repl_renders_text_and_reasoning_deltas(capsys):

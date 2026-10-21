@@ -4,12 +4,15 @@ A minimal, extensible AI coding agent for the terminal, written in Python and
 modeled after [pi](https://pi.dev).
 
 tau replicates pi's core architecture — the agent loop, streaming events,
-session persistence, tool execution, and context-file discovery — in a few
-hundred lines of dependency-light Python.
+session persistence, tool execution, and context-file discovery — in roughly
+3,500 lines of dependency-free Python across 21 modules (standard library only;
+HTTP and SSE are `urllib` plus a line loop). The test suite is about 2,000
+lines over 9 files.
 
 ## Install
 
-Requires Python 3.14+.
+Requires Python 3.14+. There are no runtime dependencies — installation pulls
+nothing beyond the standard library.
 
 ```bash
 cd tau
@@ -102,6 +105,9 @@ Styling follows the terminal's ANSI palette and is disabled automatically for
 non-TTY output, `NO_COLOR`, or `TERM=dumb`, so `tau -p` stays scriptable.
 `FORCE_COLOR=1` overrides detection.
 
+In print mode the final response goes to stdout, provider failures go to stderr
+prefixed with `tau:`, and the exit status is non-zero on failure.
+
 ## How it works
 
 A session is tau's record of a conversation. The pieces mirror pi:
@@ -111,6 +117,13 @@ A session is tau's record of a conversation. The pieces mirror pi:
   definitions; the provider streams an assistant response containing text
   and/or tool calls; tau executes each tool call and records the results.
   Tool results trigger another turn; otherwise the run ends.
+- **Provider** — one `chat/completions` request per turn, streamed over
+  `urllib` and parsed line by line as SSE, so there is no client SDK to depend
+  on. Text, reasoning, and tool-call deltas accumulate into the finished
+  message; `transport=` swaps the HTTP layer out (the tests inject a stand-in).
+  Transient failures (429, 5xx, dropped streams, server overload) are retried up
+  to three times with 1/2/4s backoff; permanent ones (bad key, bad request,
+  content filtered) fail immediately. Ctrl-C aborts between chunks.
 - **Events** — subscribe with `session.subscribe(callback)` to observe
   message start/end, text deltas, tool execution, and run lifecycle.
 - **Sessions** — append-only JSONL under `~/.tau/sessions/<date>/`. Each
@@ -198,7 +211,7 @@ src/tau/
 ├── events.py      # session lifecycle events
 ├── messages.py    # message types (user, assistant, toolResult)
 ├── prompts.py     # system prompt + AGENTS.md discovery
-├── provider.py    # streaming OpenAI-compatible runtime (DeepSeek/GLM ready)
+├── provider.py    # streaming OpenAI-compatible runtime, urllib + SSE
 ├── session.py     # JSONL session persistence (tree-shaped)
 └── tools/         # read, grep, glob, bash, edit, write, task
 ```

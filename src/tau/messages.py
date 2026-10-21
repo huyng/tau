@@ -38,6 +38,7 @@ class ToolCall:
 
     type: str = field(default="toolCall", init=False)
 
+
 # ---------------------------------------------------------------------------
 # Usage
 
@@ -52,6 +53,7 @@ class Usage:
         self.input += other.input
         self.output += other.output
         self.total_tokens += other.total_tokens
+
 
 # ---------------------------------------------------------------------------
 # Messages
@@ -110,6 +112,7 @@ def serialize_message(message: AgentMessage) -> dict[str, Any]:
     data: dict[str, Any] = {"role": message.role, "timestamp": message.timestamp}
     if isinstance(message, UserMessage):
         data["content"] = message.content
+
     elif isinstance(message, AssistantMessage):
         data["model"] = message.model
         data["provider"] = message.provider
@@ -124,9 +127,16 @@ def serialize_message(message: AgentMessage) -> dict[str, Any]:
         if message.reasoning_content:
             data["reasoningContent"] = message.reasoning_content
         data["content"] = [
-            {"type": "text", "text": b.text}
-            if isinstance(b, TextContent)
-            else {"type": "toolCall", "id": b.id, "name": b.name, "arguments": b.arguments}
+            (
+                {"type": "text", "text": b.text}
+                if isinstance(b, TextContent)
+                else {
+                    "type": "toolCall",
+                    "id": b.id,
+                    "name": b.name,
+                    "arguments": b.arguments,
+                }
+            )
             for b in message.content
         ]
     elif isinstance(message, ToolResultMessage):
@@ -148,7 +158,9 @@ def deserialize_message(data: dict[str, Any]) -> AgentMessage:
                 content.append(TextContent(text=block["text"]))
             else:
                 content.append(
-                    ToolCall(id=block["id"], name=block["name"], arguments=block["arguments"])
+                    ToolCall(
+                        id=block["id"], name=block["name"], arguments=block["arguments"]
+                    )
                 )
         return AssistantMessage(
             content=content,

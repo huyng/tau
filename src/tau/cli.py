@@ -29,7 +29,7 @@ from .events import (
     ToolNameEvent,
 )
 from .prompts import build_system_prompt
-from .provider import OpenAIProvider
+from .provider import MissingCredentialsError, OpenAIProvider
 from .render import (
     GutterWriter,
     MarkdownRenderer,
@@ -357,13 +357,17 @@ class Repl:
 def print_mode(args: argparse.Namespace) -> None:
     """Like `pi -p`: run one prompt, write the final response to stdout.
 
-    Deliberately plain: no styling, no tool chatter, no spinners.
+    Deliberately plain: no styling, no tool chatter, no spinners. Failures go
+    to stderr with a non-zero exit, so `tau -p` is usable in scripts.
     """
     session = make_session(args)
+    failures: list[str] = []
 
     def on_event(event) -> None:
         if isinstance(event, TextDeltaEvent):
             print(event.delta, end="", flush=True)
+        elif isinstance(event, ErrorEvent):
+            failures.append(event.message)
 
     unsubscribe = session.subscribe(on_event)
     try:
@@ -371,6 +375,9 @@ def print_mode(args: argparse.Namespace) -> None:
     finally:
         unsubscribe()
     print()
+    if failures:
+        print(f"tau: {failures[-1]}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -385,11 +392,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     try:
-        from openai import OpenAIError
-    except ImportError:
-        sys.exit("tau requires the openai package: pip install openai")
-
-    try:
         if args.print:
             if not args.prompt:
                 sys.exit("-p requires a prompt")
@@ -397,11 +399,8 @@ def main(argv: list[str] | None = None) -> None:
             return
 
         session = make_session(args)
-    except OpenAIError:
-        sys.exit(
-            "Missing credentials. Set OPENAI_API_KEY (or TAU_API_KEY),\n"
-            "or pass --api-key / --base-url for an OpenAI-compatible endpoint."
-        )
+    except MissingCredentialsError as exc:
+        sys.exit(str(exc))
 
     repl = Repl(session)
     if args.prompt:

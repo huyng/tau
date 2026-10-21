@@ -38,12 +38,16 @@ from .messages import (
     Usage,
     UserMessage,
 )
-from .provider import Provider
+from .provider import Provider, ProviderError
 from .session import SessionManager
 from .tools import Tool, ToolResult, validate_arguments
 
 MAX_RETRIES = 3
 RETRY_DELAYS = (1, 2, 4)
+
+#: Provider finish reasons that mean "try again later" rather than "never".
+#: DeepSeek reports overload this way instead of using an HTTP status.
+RETRYABLE_FINISH_REASONS = frozenset({"insufficient_system_resource"})
 
 
 class AgentSession:
@@ -256,12 +260,18 @@ class AgentSession:
                 if assistant.stop_reason == "error":
                     # Retry without recording the failed attempt; the final
                     # error message is appended once all retries are exhausted.
-                    raise RuntimeError(assistant.error_message or "provider error")
+                    reason = assistant.error_message or "provider error"
+                    raise ProviderError(
+                        reason, retryable=reason in RETRYABLE_FINISH_REASONS
+                    )
                 self.session_manager.append(assistant)
                 self._emit(MessageEndEvent(message=assistant))
                 return assistant
             except Exception as exc:  # transient provider failures
                 last_error = exc
+                if not getattr(exc, "retryable", True):
+                    # Permanent: retrying cannot help and costs the user time.
+                    break
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAYS[attempt]
                     self._emit(ErrorEvent(message=f"{exc}; retrying in {delay}s"))
