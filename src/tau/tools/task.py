@@ -110,6 +110,7 @@ class TaskTool(Tool):
             cwd=cwd,
             abort_event=self._parent.abort_event,
             compaction=self._parent.compaction,
+            tool_guard=self._parent.tool_guard,
         )
         self.runs += 1
         outcome = sub.prompt(prompt)

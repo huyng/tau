@@ -19,6 +19,7 @@ from tau.messages import AssistantMessage, TextContent, ToolCall, ToolResultMess
 from tau.provider import ProviderError
 from tau.session import SessionManager
 from tau.tools import Tool, ToolResult
+from tau.tools.task import TaskTool
 
 
 class FakeProvider:
@@ -60,6 +61,31 @@ class EchoTool(Tool):
     def execute(self, text: str, **_: Any) -> ToolResult:
         self.calls.append({"text": text})
         return ToolResult(output=f"echo: {text}")
+
+
+class SpyWriteTool(Tool):
+    """Records writes instead of performing them.
+
+    A blocked test asserts this never runs; an allowed test asserts it does.
+    """
+
+    name = "write"
+    description = "Record a write without touching the filesystem."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+        },
+        "required": ["path", "content"],
+    }
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def execute(self, path: str, content: str, **_: Any) -> ToolResult:
+        self.calls.append(path)
+        return ToolResult(output=f"wrote {path}")
 
 
 def make_session(tmp_path, turns) -> tuple[AgentSession, EchoTool, SessionManager]:
@@ -419,3 +445,132 @@ def test_repl_renders_text_and_reasoning_deltas(capsys):
     assert "thinking... " in out
     assert "Hello there" in out
     assert out.endswith("\n")
+
+
+def test_tool_guard_blocks_call_and_reports_to_model(tmp_path):
+    turn1 = AssistantMessage(
+        content=[ToolCall(id="c1", name="echo", arguments={"text": "hello"})],
+        model="fake-model",
+        provider="fake",
+        stop_reason="toolUse",
+    )
+    turn2 = AssistantMessage(
+        content=[TextContent(text="blocked")],
+        model="fake-model",
+        provider="fake",
+        stop_reason="stop",
+    )
+    session, tool, _ = make_session(tmp_path, [turn1, turn2])
+    session.tool_guard = lambda call: "not allowed"
+
+    session.prompt("run the echo tool")
+
+    assert tool.calls == []  # never executed
+    result = next(m for m in session.messages if isinstance(m, ToolResultMessage))
+    assert result.is_error
+    assert "blocked by policy" in result.output
+
+
+def test_default_guard_blocks_before_execute(tmp_path):
+    turn1 = AssistantMessage(
+        content=[
+            ToolCall(
+                id="c1", name="write",
+                arguments={"path": "../escape.txt", "content": "x"},
+            )
+        ],
+        model="fake-model",
+        provider="fake",
+        stop_reason="toolUse",
+    )
+    turn2 = AssistantMessage(
+        content=[TextContent(text="done")], model="fake-model", provider="fake"
+    )
+    tool = SpyWriteTool()
+    session = AgentSession(
+        provider=FakeProvider([turn1, turn2]),
+        tools=[tool],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+        cwd=str(tmp_path),
+    )
+
+    session.prompt("write outside")
+
+    assert tool.calls == []  # execute() was never reached
+    result = next(m for m in session.messages if isinstance(m, ToolResultMessage))
+    assert result.is_error
+    assert "blocked by policy" in result.output
+
+
+def test_default_guard_allows_write_inside_cwd(tmp_path):
+    turn1 = AssistantMessage(
+        content=[
+            ToolCall(
+                id="c1", name="write",
+                arguments={"path": "ok.txt", "content": "x"},
+            )
+        ],
+        model="fake-model",
+        provider="fake",
+        stop_reason="toolUse",
+    )
+    turn2 = AssistantMessage(
+        content=[TextContent(text="done")], model="fake-model", provider="fake"
+    )
+    tool = SpyWriteTool()
+    session = AgentSession(
+        provider=FakeProvider([turn1, turn2]),
+        tools=[tool],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+        cwd=str(tmp_path),
+    )
+
+    session.prompt("write inside")
+
+    assert tool.calls == ["ok.txt"]
+
+
+def test_task_subagent_inherits_tool_guard(tmp_path):
+    seen: list[str] = []
+
+    def guard(call: ToolCall) -> str | None:
+        seen.append(call.name)
+        return None
+
+    turns = [
+        AssistantMessage(
+            content=[
+                ToolCall(id="c1", name="task", arguments={"prompt": "investigate"})
+            ],
+            model="fake-model",
+            provider="fake",
+            stop_reason="toolUse",
+        ),
+        # The sub-agent's turn runs through the parent's guard too.
+        AssistantMessage(
+            content=[ToolCall(id="c2", name="read", arguments={"path": "x"})],
+            model="fake-model",
+            provider="fake",
+            stop_reason="toolUse",
+        ),
+        AssistantMessage(
+            content=[TextContent(text="sub report")], model="fake-model", provider="fake"
+        ),
+        AssistantMessage(
+            content=[TextContent(text="final")], model="fake-model", provider="fake"
+        ),
+    ]
+    session = AgentSession(
+        provider=FakeProvider(turns),
+        tools=[TaskTool(cwd=str(tmp_path))],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="parent prompt",
+        cwd=str(tmp_path),
+        tool_guard=guard,
+    )
+
+    session.prompt("delegate")
+
+    assert "read" in seen

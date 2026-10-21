@@ -1,3 +1,5 @@
+import os
+import re
 import subprocess
 from typing import Any
 
@@ -5,6 +7,18 @@ from .base import Tool, ToolResult
 
 MAX_OUTPUT_LINES = 2000
 DEFAULT_TIMEOUT = 120
+
+#: Variables a child process never needs, and that must not reach its output.
+#: The harness reads its own provider key from the environment
+#: (``provider.py:211-214``), so an unscrubbed child leaks it with plain `env`.
+_SCRUB = re.compile(r"KEY|TOKEN|SECRET|PASSW|CRED", re.IGNORECASE)
+
+
+def _child_env() -> dict[str, str]:
+    """Every variable except credentials. Deliberately not an allowlist: a
+    missing PATH/GOPATH/CARGO_HOME breaks toolchains silently, which is worse
+    than passing a variable the child did not need."""
+    return {k: v for k, v in os.environ.items() if not _SCRUB.search(k)}
 
 
 def _text(value: str | bytes | None) -> str:
@@ -64,6 +78,7 @@ class BashTool(Tool):
                 command,
                 shell=True,
                 cwd=self.cwd,
+                env=_child_env(),
                 capture_output=True,
                 text=True,
                 errors="replace",

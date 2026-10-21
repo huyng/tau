@@ -26,6 +26,7 @@ def create_agent_session(
     cwd: str | None = None,
     tools: list[Tool] | None = None,
     persistent: bool = True,
+    tool_guard=None,
 ) -> AgentSession:
     """Create an agent session with sensible defaults.
 
@@ -45,4 +46,5 @@ def create_agent_session(
         session_manager=session_manager,
         system_prompt=build_system_prompt(cwd),
         cwd=cwd,
+        tool_guard=tool_guard,
     )

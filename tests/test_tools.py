@@ -218,6 +218,17 @@ def test_bash_success_is_not_an_error(bash):
     assert "[exit code: 0]" in result.output
 
 
+def test_bash_does_not_leak_env_secrets(bash, monkeypatch):
+    """`env` must not print the provider key to the model's context."""
+    monkeypatch.setenv("FAKE_API_KEY", "hunter2")
+    monkeypatch.setenv("FAKE_VISIBLE", "ok")
+
+    result = bash.execute(command="env")
+
+    assert "hunter2" not in result.output
+    assert "FAKE_VISIBLE=ok" in result.output
+
+
 def test_bash_survives_non_utf8_output(bash):
     """A latin-1 byte must not throw away the whole result.
 

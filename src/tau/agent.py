@@ -38,6 +38,7 @@ from .messages import (
     Usage,
     UserMessage,
 )
+from .policy import basic_guard
 from .provider import Provider, ProviderError
 from .session import SessionManager
 from .tools import Tool, ToolResult, validate_arguments
@@ -60,6 +61,7 @@ class AgentSession:
         cwd: str | None = None,
         abort_event: threading.Event | None = None,
         compaction: CompactionConfig | None = None,
+        tool_guard: Callable[[ToolCall], str | None] | None = None,
     ):
         self.provider = provider
         self.tools = {tool.name: tool for tool in tools}
@@ -67,6 +69,7 @@ class AgentSession:
         self.system_prompt = system_prompt
         self.cwd = cwd
         self.compaction = compaction if compaction is not None else CompactionConfig.from_env()
+        self.tool_guard = tool_guard if tool_guard is not None else basic_guard(cwd)
         self._subscribers: list[Callable] = []
         # A shared event lets a parent and its sub-agents abort together.
         self._abort_event = abort_event if abort_event is not None else threading.Event()
@@ -328,6 +331,12 @@ class AgentSession:
                 ),
                 is_error=True,
             )
+        if self.tool_guard is not None:
+            reason = self.tool_guard(call)
+            if reason:
+                return ToolResult(
+                    output=f"Error: blocked by policy: {reason}", is_error=True
+                )
         try:
             return tool.execute(**call.arguments)
         except TypeError as exc:
