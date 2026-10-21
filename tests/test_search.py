@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from tau.tools.search import GlobTool, GrepTool
+from tau.tools.search import GlobTool, GrepTool, _expand_braces
 
 
 @pytest.fixture
@@ -169,6 +169,61 @@ def test_glob_limit_reports_remainder(tmp_path):
 
 def test_glob_no_matches(glob):
     assert glob.execute(pattern="*.rs").output.startswith("No files match")
+
+
+# -- glob: brace alternation --------------------------------------------------
+
+
+def test_glob_expands_brace_alternation(tmp_path):
+    """`*.{md,rst}` style patterns come from shell/ripgrep habit; they must match."""
+    (tmp_path / "README.md").write_text("")
+    (tmp_path / "NOTES.rst").write_text("")
+
+    paths = GlobTool(cwd=str(tmp_path)).execute(pattern="**/*.{md,rst}").output.splitlines()
+
+    assert "README.md" in paths
+    assert "NOTES.rst" in paths
+
+
+def test_glob_brace_without_slash_matches_basename(glob):
+    assert glob.execute(pattern="*.{md,rst}").output.strip() == "README.md"
+
+
+def test_glob_expands_nested_braces(glob):
+    paths = glob.execute(pattern="**/*.{py,{md,txt}}").output.splitlines()
+
+    assert "src/app.py" in paths
+    assert "README.md" in paths
+
+
+def test_glob_single_alternative_brace(glob):
+    assert "src/app.py" in glob.execute(pattern="**/{app}.py").output
+
+
+def test_grep_glob_filter_accepts_braces(grep):
+    result = grep.execute(pattern="needle", glob="*.{md,rst}")
+
+    assert "README.md" in result.output
+    assert "src/app.py" not in result.output
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "**/*.py",           # no braces at all
+        "src/{app.py",       # unbalanced opening brace
+        "src/app.py}",       # unbalanced closing brace
+        "{}*.py",            # empty alternation
+    ],
+)
+def test_glob_brace_expansion_never_raises(pattern):
+    assert _expand_braces(pattern)  # always returns something to match
+
+
+def test_expand_braces_is_exhaustive():
+    assert _expand_braces("*.{py,md}") == ["*.py", "*.md"]
+    assert _expand_braces("a/{b,c}/{d,e}") == ["a/b/d", "a/b/e", "a/c/d", "a/c/e"]
+    assert _expand_braces("plain") == ["plain"]
 
 
 def test_glob_missing_path(glob):

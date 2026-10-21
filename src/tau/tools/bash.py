@@ -4,6 +4,37 @@ from typing import Any
 from .base import Tool, ToolResult
 
 MAX_OUTPUT_LINES = 2000
+DEFAULT_TIMEOUT = 120
+
+
+def _text(value: str | bytes | None) -> str:
+    """Decode command output leniently.
+
+    `text=True` decodes strictly, so a single non-UTF-8 byte (binary output, a
+    latin-1 log, a file with junk in it) raises `UnicodeDecodeError` and throws
+    away the entire result. Real subprocess output is arbitrary bytes, so
+    replacement characters beat losing the command's output.
+    """
+    if not value:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _combined(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    out, err = _text(stdout).strip(), _text(stderr).strip()
+    if out and err:
+        return f"{out}\n{err}"
+    return out or err
+
+
+def _keep_last_lines(output: str) -> str:
+    lines = output.splitlines()
+    if len(lines) <= MAX_OUTPUT_LINES:
+        return output
+    skipped = len(lines) - MAX_OUTPUT_LINES
+    return f"... {skipped} lines skipped ...\n" + "\n".join(lines[-MAX_OUTPUT_LINES:])
 
 
 class BashTool(Tool):
@@ -27,7 +58,7 @@ class BashTool(Tool):
     def execute(
         self, command: str, timeout: int | None = None, **_: Any
     ) -> ToolResult:
-        timeout_seconds = timeout or 120
+        timeout_seconds = timeout or DEFAULT_TIMEOUT
         try:
             proc = subprocess.run(
                 command,
@@ -35,24 +66,23 @@ class BashTool(Tool):
                 cwd=self.cwd,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=timeout_seconds,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as expired:
+            # Whatever the command produced before the deadline is still
+            # valuable — a build that fails at 95% has already said why.
+            # (These attributes arrive as bytes even when text=True.)
+            partial = _combined(expired.stdout, expired.stderr)
+            header = f"Error: command timed out after {timeout_seconds}s"
+            if not partial:
+                return ToolResult(header, is_error=True)
             return ToolResult(
-                f"Error: command timed out after {timeout_seconds}s", is_error=True
+                _keep_last_lines(f"{header}\nPartial output:\n{partial}"),
+                is_error=True,
             )
 
-        output = ""
-        if proc.stdout:
-            output += proc.stdout
-        if proc.stderr:
-            output += ("\n" if output else "") + proc.stderr
-        output = output.strip()
-        output += f"\n[exit code: {proc.returncode}]"
-
-        lines = output.splitlines()
-        if len(lines) > MAX_OUTPUT_LINES:
-            skipped = len(lines) - MAX_OUTPUT_LINES
-            output = f"... {skipped} lines skipped ...\n" + "\n".join(lines[-MAX_OUTPUT_LINES:])
-
-        return ToolResult(output, is_error=proc.returncode != 0)
+        output = _combined(proc.stdout, proc.stderr)
+        status = f"[exit code: {proc.returncode}]"
+        output = f"{output}\n{status}" if output else status
+        return ToolResult(_keep_last_lines(output), is_error=proc.returncode != 0)

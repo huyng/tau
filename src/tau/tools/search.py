@@ -60,6 +60,47 @@ def _display(path: Path, cwd: str | None) -> str:
     return shown.replace(os.sep, "/")
 
 
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand `{a,b}` alternatives, including nested ones.
+
+    Models reach for shell/ripgrep syntax like `*.{py,md}` constantly, and
+    `fnmatch`/`full_match` do not support braces — an unexpanded pattern matches
+    nothing, which reads as "no such file" rather than as a bad pattern.
+    """
+    start = depth = 0
+    for index, char in enumerate(pattern):
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth:
+                continue
+            head, tail = pattern[:start], pattern[index + 1 :]
+            body = pattern[start + 1 : index]
+            parts: list[str] = []
+            current: list[str] = []
+            inner = 0
+            for piece in body:
+                if piece == "{":
+                    inner += 1
+                elif piece == "}":
+                    inner -= 1
+                elif piece == "," and not inner:
+                    parts.append("".join(current))
+                    current = []
+                    continue
+                current.append(piece)
+            parts.append("".join(current))
+            expanded: list[str] = []
+            for part in parts:
+                expanded.extend(_expand_braces(head + part + tail))
+            return expanded
+    # No braces, or an unbalanced one: let it match literally.
+    return [pattern]
+
+
 def _matches_pattern(relative: str, pattern: str) -> bool:
     """Match a repo-relative path against a glob.
 
@@ -67,12 +108,18 @@ def _matches_pattern(relative: str, pattern: str) -> bool:
     `PurePath.full_match`, so `**/*.py` also matches top-level `a.py`.
     Patterns without one match the basename, so `*.py` does what users expect.
     """
+    return any(_matches_one(relative, alt) for alt in _expand_braces(pattern))
+
+
+def _matches_one(relative: str, pattern: str) -> bool:
     if "/" in pattern:
         return PurePath(relative).full_match(pattern)
     return fnmatch.fnmatchcase(PurePath(relative).name, pattern)
 
 
 def _iter_files(root: Path, pattern: str | None = None) -> Iterator[Path]:
+    # Expand once, not per file: the walk can visit tens of thousands of paths.
+    alternatives = _expand_braces(pattern) if pattern is not None else None
     for dirpath, dirnames, filenames in os.walk(root):
         # Hidden directories are skipped, matching ripgrep's default; hidden
         # *files* stay visible so `.gitignore`-style config is searchable.
@@ -82,9 +129,9 @@ def _iter_files(root: Path, pattern: str | None = None) -> Iterator[Path]:
         )
         for filename in sorted(filenames):
             path = Path(dirpath) / filename
-            if pattern is not None:
+            if alternatives is not None:
                 relative = path.relative_to(root).as_posix()
-                if not _matches_pattern(relative, pattern):
+                if not any(_matches_one(relative, alt) for alt in alternatives):
                     continue
             yield path
 
@@ -248,10 +295,9 @@ class GrepTool(Tool):
 class GlobTool(Tool):
     name = "glob"
     description = (
-        "Find files by glob pattern, newest first. Supports `**` for any "
-        "number of directories (`**/*.py`), and matches the basename when the "
-        "pattern has no slash (`*.md`). Same skips as `grep`: hidden "
-        "directories, .git, node_modules, .venv, build output."
+        "Find files by glob pattern, newest first. Prefer this over `ls`/`find`: "
+        "it skips .git, node_modules, .venv, and build output, and returns paths "
+        "relative to the working directory."
     )
     parameters = {
         "type": "object",
@@ -262,11 +308,11 @@ class GlobTool(Tool):
             },
             "path": {
                 "type": "string",
-                "description": "Directory to search in (default: working directory)",
+                "description": "Search root (default: working directory)",
             },
             "limit": {
                 "type": "integer",
-                "description": f"Maximum number of paths (default {DEFAULT_GLOB_LIMIT})",
+                "description": f"Max paths (default {DEFAULT_GLOB_LIMIT})",
             },
         },
         "required": ["pattern"],

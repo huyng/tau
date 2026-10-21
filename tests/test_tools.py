@@ -1,8 +1,9 @@
-"""Tests for the built-in tools: read, write, and the edit tool's
-offset-based application and unified-diff output."""
+"""Tests for the built-in tools: read, write, bash process handling, and the
+edit tool's offset-based application and unified-diff output."""
 
 import pytest
 
+from tau.tools.bash import MAX_OUTPUT_LINES, BashTool
 from tau.tools.edit import MAX_DIFF_LINES, EditTool, WriteTool
 from tau.tools.read import MAX_LINES, ReadTool
 from tau.tools.validation import validate_arguments
@@ -11,6 +12,11 @@ from tau.tools.validation import validate_arguments
 @pytest.fixture
 def edit(tmp_path):
     return EditTool(cwd=str(tmp_path))
+
+
+@pytest.fixture
+def bash(tmp_path):
+    return BashTool(cwd=str(tmp_path))
 
 
 def write_file(tmp_path, name: str, content: str):
@@ -193,6 +199,67 @@ def test_read_rejects_binary(tmp_path):
     result = ReadTool(cwd=str(tmp_path)).execute(path="bin")
     assert result.is_error
     assert "not a text file" in result.output
+
+# -- bash: process output ----------------------------------------------------
+
+
+def test_bash_reports_stdout_stderr_and_exit_code(bash):
+    result = bash.execute(command="printf 'out\\n'; printf 'err\\n' >&2; exit 3")
+
+    assert "out" in result.output and "err" in result.output
+    assert "[exit code: 3]" in result.output
+    assert result.is_error
+
+
+def test_bash_success_is_not_an_error(bash):
+    result = bash.execute(command="printf 'fine\\n'")
+
+    assert result.is_error is False
+    assert "[exit code: 0]" in result.output
+
+
+def test_bash_survives_non_utf8_output(bash):
+    """A latin-1 byte must not throw away the whole result.
+
+    `text=True` alone decodes strictly, so this used to raise
+    UnicodeDecodeError and lose the command's output entirely.
+    """
+    result = bash.execute(command="printf 'caf\\xe9 ok\\n'")
+
+    assert "caf" in result.output and "ok" in result.output
+    assert "[exit code: 0]" in result.output
+    assert result.is_error is False
+
+
+def test_bash_timeout_keeps_partial_output(bash):
+    result = bash.execute(command="printf 'started\\n'; sleep 5", timeout=1)
+
+    assert "timed out after 1s" in result.output
+    assert "started" in result.output
+    assert result.is_error
+
+
+def test_bash_timeout_without_output_says_only_that(bash):
+    result = bash.execute(command="sleep 5", timeout=1)
+
+    assert result.output == "Error: command timed out after 1s"
+    assert result.is_error
+
+
+def test_bash_keeps_the_last_lines_when_truncating(bash):
+    over = MAX_OUTPUT_LINES + 20
+    result = bash.execute(command=f"seq 1 {over}")
+
+    assert f"... {over + 1 - MAX_OUTPUT_LINES} lines skipped ..." in result.output
+    assert f"\n{over}\n[exit code: 0]" in result.output  # newest lines + status kept
+    assert "\n1\n" not in result.output  # oldest lines dropped
+
+
+def test_bash_empty_output_still_reports_exit_code(bash):
+    result = bash.execute(command="true")
+
+    assert result.output == "[exit code: 0]"
+
 
 # -- schema validation -------------------------------------------------------
 

@@ -79,3 +79,5 @@ ipython_config.py
 # Logs and local databases
 *.log
 *.sqlite3
+
+AGENTS.md
