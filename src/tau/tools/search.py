@@ -64,7 +64,7 @@ def _expand_braces(pattern: str) -> list[str]:
     """Expand `{a,b}` alternatives, including nested ones.
 
     Models reach for shell/ripgrep syntax like `*.{py,md}` constantly, and
-    `fnmatch`/`full_match` do not support braces — an unexpanded pattern matches
+    the segment matcher does not support braces — an unexpanded pattern matches
     nothing, which reads as "no such file" rather than as a bad pattern.
     """
     start = depth = 0
@@ -104,17 +104,28 @@ def _expand_braces(pattern: str) -> list[str]:
 def _matches_pattern(relative: str, pattern: str) -> bool:
     """Match a repo-relative path against a glob.
 
-    Patterns with a slash are matched against the whole path with
-    `PurePath.full_match`, so `**/*.py` also matches top-level `a.py`.
-    Patterns without one match the basename, so `*.py` does what users expect.
+    Patterns with a slash are matched segment by segment against the whole
+    path, so `**/*.py` also matches top-level `a.py`. Patterns without one
+    match the basename, so `*.py` does what users expect.
     """
     return any(_matches_one(relative, alt) for alt in _expand_braces(pattern))
 
 
 def _matches_one(relative: str, pattern: str) -> bool:
     if "/" in pattern:
-        return PurePath(relative).full_match(pattern)
+        return _match_segments(relative.split("/"), pattern.split("/"))
     return fnmatch.fnmatchcase(PurePath(relative).name, pattern)
+
+
+def _match_segments(parts: list[str], pattern: list[str]) -> bool:
+    """`PurePath.full_match` needs 3.13; `**` spans zero or more whole segments."""
+    if not pattern:
+        return not parts
+    if pattern[0] == "**":
+        # A trailing `**` still needs one segment to land on, as full_match does.
+        first = 1 if len(pattern) == 1 else 0
+        return any(_match_segments(parts[i:], pattern[1:]) for i in range(first, len(parts) + 1))
+    return bool(parts) and fnmatch.fnmatchcase(parts[0], pattern[0]) and _match_segments(parts[1:], pattern[1:])
 
 
 def _iter_files(root: Path, pattern: str | None = None) -> Iterator[Path]:

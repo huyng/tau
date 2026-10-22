@@ -49,7 +49,7 @@ class Usage:
     output: int = 0
     total_tokens: int = 0
 
-    def add(self, other: Usage) -> None:
+    def add(self, other: "Usage") -> None:
         self.input += other.input
         self.output += other.output
         self.total_tokens += other.total_tokens

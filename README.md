@@ -11,7 +11,7 @@ lines over 9 files.
 
 ## Install
 
-Requires Python 3.14+. There are no runtime dependencies — installation pulls
+Requires Python 3.12+. There are no runtime dependencies — installation pulls
 nothing beyond the standard library.
 
 ```bash
@@ -88,7 +88,7 @@ tau --resume 2          # resume a previous session
 Slash commands inside the REPL:
 
 ```
-/help /model /tools /system /plain /thinking /new /sessions /resume /compact /usage /quit
+/help /model /tools /system /plain /thinking /new /sessions /resume /compact /quit
 ```
 
 Ctrl-C aborts the active run (steering between turns). Ctrl-D exits.

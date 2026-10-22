@@ -115,7 +115,8 @@ class TaskTool(Tool):
         self.runs += 1
         outcome = sub.prompt(prompt)
         # Sub-agent spend is real spend: fold it into the parent's totals so
-        # `/usage` reflects the whole run, delegation included.
+        # the session's cumulative usage reflects the whole run, delegation
+        # included.
         self._parent.usage.add(sub.usage)
 
         if outcome.stop_reason == "error":

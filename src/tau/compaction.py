@@ -177,7 +177,8 @@ def summarize(
 
     Histories larger than `max_summary_input_tokens` are folded in batches,
     each request carrying the summary produced so far. Token usage of the
-    summary calls is added to `usage` when given, so it shows up in `/usage`.
+    summary calls is added to `usage` when given, so it counts toward the
+    session's cumulative totals.
     """
     summary = ""
     for batch in _batches(messages, config.max_summary_input_tokens):

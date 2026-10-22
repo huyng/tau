@@ -3,7 +3,7 @@ name = "tau"
 version = "0.1.0"
 description = "A minimal AI coding agent for the terminal, modeled after pi"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = []
 
@@ -21,11 +21,12 @@ packages = ["src/tau"]
 dev = [
     "pyright>=1.1.414",
     "pytest>=9.1.1",
+    "ruff>=0.17.2",
 ]
 
 [tool.pyright]
 include = ["src", "tests"]
-pythonVersion = "3.14"
+pythonVersion = "3.12"
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"

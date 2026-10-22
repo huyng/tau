@@ -53,7 +53,6 @@ HELP = """\
 /sessions          List recent sessions
 /resume <n>        Resume the n-th session from /sessions
 /compact           Summarize old turns now (automatic near the limit)
-/usage             Show cumulative token usage
 /quit              Exit (also Ctrl-D)
 """
 
@@ -277,14 +276,12 @@ class Repl:
         elapsed = time.monotonic() - started
         self._print_usage(elapsed, self.session.usage.output - output_before)
 
-    def _print_usage(self, elapsed: float | None = None, output_tokens: int = 0) -> None:
+    def _print_usage(self, elapsed: float, output_tokens: int) -> None:
         # `output_tokens` is this run's delta: session usage is cumulative,
         # so a rate built from it would shrink with every prompt.
         usage = self.session.usage
         if usage.total_tokens:
-            parts = [self.session.provider.model]
-            if elapsed is not None:
-                parts.append(format_duration(elapsed))
+            parts = [self.session.provider.model, format_duration(elapsed)]
             if elapsed and output_tokens:
                 parts.append(f"{output_tokens / elapsed:.0f} tok/s")
             parts += [
@@ -347,8 +344,6 @@ class Repl:
                 return False
             self.session.session_manager.load(sessions[index])
             print(theme.dim(f"resumed {sessions[index]}"))
-        elif command == "/usage":
-            self._print_usage()
         elif command == "/compact":
             if not self.session.compact():
                 print(theme.dim("nothing to compact (too few turns, or disabled)"))

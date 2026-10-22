@@ -3,8 +3,6 @@
 import json
 from typing import Any, cast
 
-import pytest
-
 from tau.agent import AgentSession
 from tau.events import (
     AgentEndEvent,
@@ -15,7 +13,13 @@ from tau.events import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
 )
-from tau.messages import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
+from tau.messages import (
+    AssistantMessage,
+    TextContent,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau.provider import ProviderError
 from tau.session import SessionManager
 from tau.tools import Tool, ToolResult
