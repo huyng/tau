@@ -266,6 +266,7 @@ class Repl:
 
     def _submit(self, text: str) -> None:
         started = time.monotonic()
+        output_before = self.session.usage.output
         try:
             self.session.prompt(text)
         except KeyboardInterrupt:
@@ -273,14 +274,19 @@ class Repl:
         finally:
             self._spinner.stop()  # e.g. Ctrl-C surfaced outside event handling
         print()  # blank line after each run
-        self._print_usage(time.monotonic() - started)
+        elapsed = time.monotonic() - started
+        self._print_usage(elapsed, self.session.usage.output - output_before)
 
-    def _print_usage(self, elapsed: float | None = None) -> None:
+    def _print_usage(self, elapsed: float | None = None, output_tokens: int = 0) -> None:
+        # `output_tokens` is this run's delta: session usage is cumulative,
+        # so a rate built from it would shrink with every prompt.
         usage = self.session.usage
         if usage.total_tokens:
             parts = [self.session.provider.model]
             if elapsed is not None:
                 parts.append(format_duration(elapsed))
+            if elapsed and output_tokens:
+                parts.append(f"{output_tokens / elapsed:.0f} tok/s")
             parts += [
                 f"{usage.input:,} in",
                 f"{usage.output:,} out",
