@@ -130,8 +130,7 @@ Lower the threshold when running a smaller-context model. Compaction is
 conservative: if the summary would not be smaller than the turns it replaces
 (short branches, or one huge tool result), it is skipped and the verbatim
 history is kept. Failures are non-fatal too — the summary request fails,
-history is left untouched, and the run continues. Neither case is retried
-within the same run.
+history is left untouched, and the run continues.
 
 ## SDK usage
 
@@ -139,7 +138,7 @@ within the same run.
 from tau import create_agent_session
 
 def handler(event):
-    print(getattr(event, "delta", ""), end="")
+    print(event.get("delta", ""), end="")
 
 session = create_agent_session()
 unsubscribe = session.subscribe(handler)
@@ -166,8 +165,9 @@ class GitStatusTool(Tool):
         out = subprocess.run(["git", "status", "--short"], capture_output=True, text=True).stdout
         return ToolResult(output=out or "clean")
 ```
+## Basic Safety Checks
 
-Pass `tools=[GitStatusTool(), ...]` to `create_agent_session`.
+The `policy.py` implements some basic gaurds for overtly destructive tool calls e.g. `rm -rf /`. These are not all encompassing and are not meant to catch every case, just the obvious ones.
 
 ## Layout
 
