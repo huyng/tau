@@ -161,17 +161,17 @@ class AgentSession:
         self._emit(AgentStartEvent())
         self.session_manager.append(UserMessage(content=text))
 
-        ast_message: AssistantMessage | None = None
+        asst_message: AssistantMessage | None = None
         aborted = False
         try:
             while True:
                 self._maybe_compact()
-                ast_message = self._run_turn()
-                if ast_message is None or self._abort_event.is_set():
+                asst_message = self._run_turn()
+                if asst_message is None or self._abort_event.is_set():
                     aborted = True
                     break
-                if ast_message.stop_reason == "toolUse" and ast_message.tool_calls:
-                    if not self._execute_tool_calls(ast_message):
+                if asst_message.stop_reason == "toolUse" and asst_message.tool_calls:
+                    if not self._execute_tool_calls(asst_message):
                         aborted = True  # aborted between tool calls
                         break
                     continue  # tool results require another model request
@@ -182,15 +182,17 @@ class AgentSession:
             self._busy = False
             self._emit(AgentEndEvent(aborted=aborted))
 
-        if ast_message is None:
+        if asst_message is None:
             # Aborted before the first response landed. Still record an assistant
             # message so the branch never ends on a user turn with no reply.
-            ast_message = AssistantMessage(
-                content=[], model=self.provider.model, provider=self.provider.name,
+            asst_message = AssistantMessage(
+                content=[],
+                model=self.provider.model,
+                provider=self.provider.name,
                 stop_reason="aborted",
             )
-            self.session_manager.append(ast_message)
-        return ast_message
+            self.session_manager.append(asst_message)
+        return asst_message
 
     def abort(self) -> None:
         """Stop the active run after the current provider chunk / tool call."""
@@ -222,7 +224,8 @@ class AgentSession:
         if tokens_before is None:
             tokens_before = estimate_tokens(messages)
         self._emit(
-            CompactionStartEvent(messages=len(older), tokens=estimate_tokens(older))
+            CompactionStartEvent(messages=len(older),
+                                 tokens=estimate_tokens(older))
         )
         try:
             summary = summarize(
@@ -286,21 +289,21 @@ class AgentSession:
                     except StopIteration as stop:
                         # The provider hands back the finished message as the
                         # generator's return value, so the loop is also the return.
-                        assistant: AssistantMessage = stop.value
+                        asst_message: AssistantMessage = stop.value
                         break
                     self._emit(event)
                 # Counted before the error check: failed attempts still bill tokens.
-                self.usage.add(assistant.usage)
-                if assistant.stop_reason == "error":
+                self.usage.add(asst_message.usage)
+                if asst_message.stop_reason == "error":
                     # Retry without recording the failed attempt; the final
                     # error message is appended once all retries are exhausted.
-                    reason = assistant.error_message or "provider error"
+                    reason = asst_message.error_message or "provider error"
                     raise ProviderError(
                         reason, retryable=reason in RETRYABLE_FINISH_REASONS
                     )
-                self.session_manager.append(assistant)
-                self._emit(MessageEndEvent(message=assistant))
-                return assistant
+                self.session_manager.append(asst_message)
+                self._emit(MessageEndEvent(message=asst_message))
+                return asst_message
             except Exception as exc:  # transient provider failures
                 last_error = exc
                 if not getattr(exc, "retryable", True):
