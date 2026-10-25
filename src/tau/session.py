@@ -29,16 +29,26 @@ DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class SessionManager:
+    """One session: the entry tree in memory plus the JSONL file backing it.
+
+    `in_memory` drops the file side entirely (sub-agents, tests), so the tree
+    lives only in `self.entries`.
+    """
+
     def __init__(self, directory: Path | None = None, *, in_memory: bool = False):
         self.directory = directory if directory is not None else SESSIONS_DIR
         self.in_memory = in_memory
-        self.file: Path | None = None
-        self.entries: dict[str, dict] = {}
-        self.current_id: str | None = None
+        self.file: Path | None = None  # set by new_session/load, None until then
+        self.entries: dict[str, dict] = {}  # id -> entry, all branches, not just active
+        self.current_id: str | None = None  # active leaf; history walks its parents
 
     # -- construction ----------------------------------------------------------
 
     def new_session(self) -> None:
+        """Forget history and choose the file the next append will create.
+
+        The file itself appears on the first `append`, not here.
+        """
         self.entries = {}
         self.current_id = None
         if self.in_memory:
@@ -48,6 +58,11 @@ class SessionManager:
         self.file = self.directory / date / f"{uuid.uuid4().hex[:12]}.jsonl"
 
     def load(self, path: Path) -> None:
+        """Rebuild the tree from a session file, ending at the last leaf pointer.
+
+        Lines that do not parse are skipped instead of fatal: a session killed
+        mid-write leaves a truncated final line.
+        """
         self.file = path
         self.entries = {}
         self.current_id = None
@@ -62,6 +77,7 @@ class SessionManager:
                     continue  # a truncated final line must not lose the session
                 if not isinstance(data, dict):
                     continue
+                # Two line shapes: `{"current": id}` pointers and message entries.
                 if "current" in data:
                     self.current_id = data["current"]
                 elif "id" in data and "message" in data:
@@ -84,6 +100,7 @@ class SessionManager:
 
     @staticmethod
     def list_sessions(directory: Path | None = None) -> list[Path]:
+        """Session files this module wrote, most recently modified first."""
         directory = directory if directory is not None else SESSIONS_DIR
         if not directory.is_dir():
             return []
@@ -111,6 +128,11 @@ class SessionManager:
             self.append(message)
 
     def append(self, message: AgentMessage) -> str:
+        """Add `message` as a child of the current leaf and move the leaf to it.
+
+        Returns the new entry id. The pointer line is written after the entry so
+        the entry is always on disk before it becomes the active branch.
+        """
         entry_id = new_id()
         entry = {
             "id": entry_id,

@@ -52,6 +52,12 @@ RETRYABLE_FINISH_REASONS = frozenset({"insufficient_system_resource"})
 
 
 class AgentSession:
+    """Drives one conversation: prompts in, assistant messages and tool results out.
+
+    It keeps no transcript of its own — history lives in the `SessionManager`,
+    so a session restored from disk resumes on whatever branch was active.
+    """
+
     def __init__(
         self,
         provider: Provider,
@@ -64,7 +70,7 @@ class AgentSession:
         tool_guard: Callable[[ToolCall], str | None] | None = None,
     ):
         self.provider = provider
-        self.tools = {tool.name: tool for tool in tools}
+        self.tools = {tool.name: tool for tool in tools}  # keyed for tool-call dispatch
         self.session_manager = session_manager
         self.system_prompt = system_prompt
         self.cwd = cwd
@@ -74,15 +80,18 @@ class AgentSession:
         # A shared event lets a parent and its sub-agents abort together.
         self._abort_event = abort_event if abort_event is not None else threading.Event()
         self._busy = False
-        self._compaction_blocked = False
+        self._compaction_blocked = False  # at most one compaction attempt per run
         self.usage = Usage()  # cumulative totals across runs
 
         for tool in self.tools.values():
+            # Tools that need to reach back into the session (e.g. `task` spawning
+            # sub-agents) opt in by defining this; the rest are left alone.
             bind = getattr(tool, "bind_session", None)
             if callable(bind):
                 bind(self)
 
         if session_manager.file is None:
+            # A fresh manager has no path yet; pick one so this run is persisted.
             session_manager.new_session()
 
     # -- event subscription ----------------------------------------------------
@@ -98,6 +107,7 @@ class AgentSession:
         return unsubscribe
 
     def _emit(self, event) -> None:
+        """Fan an event out to subscribers, over a copy so they may unsubscribe."""
         for callback in list(self._subscribers):
             callback(event)
 
@@ -110,6 +120,7 @@ class AgentSession:
 
     @property
     def busy(self) -> bool:
+        """True while a run is in flight."""
         return self._busy
 
     @property
@@ -118,35 +129,49 @@ class AgentSession:
         return self._abort_event
 
     def last_assistant_text(self) -> str:
+        """Text of the latest assistant message, or "" if there is none.
+
+        Read off the branch rather than a local buffer, so it also answers for a
+        session loaded from disk and for a run that just compacted.
+        """
         for message in reversed(self.messages):
             if isinstance(message, AssistantMessage):
                 return message.text
         return ""
 
     def set_model(self, model: str) -> None:
+        """Switch the model for subsequent requests; recorded history is untouched."""
         self.provider.model = model
 
     # -- prompting -------------------------------------------------------------
 
     def prompt(self, text: str) -> AssistantMessage:
-        """Run the agent loop for a user message. Resolves when the run ends."""
+        """Run the agent loop for a user message; returns the final assistant message.
+
+        Loop: compact if over threshold, send one request, and if the response
+        carries tool calls, execute them and repeat — results always need a
+        follow-up request. Anything else ends the run. Messages are appended as
+        they happen, so an interrupted run still reads as a transcript.
+
+        Returns an `aborted` stub if nothing landed before the run stopped.
+        """
         self._abort_event.clear()
         self._busy = True
         self._compaction_blocked = False
         self._emit(AgentStartEvent())
         self.session_manager.append(UserMessage(content=text))
 
-        assistant: AssistantMessage | None = None
+        ast_message: AssistantMessage | None = None
         aborted = False
         try:
             while True:
                 self._maybe_compact()
-                assistant = self._run_turn()
-                if assistant is None or self._abort_event.is_set():
+                ast_message = self._run_turn()
+                if ast_message is None or self._abort_event.is_set():
                     aborted = True
                     break
-                if assistant.stop_reason == "toolUse" and assistant.tool_calls:
-                    if not self._execute_tool_calls(assistant):
+                if ast_message.stop_reason == "toolUse" and ast_message.tool_calls:
+                    if not self._execute_tool_calls(ast_message):
                         aborted = True  # aborted between tool calls
                         break
                     continue  # tool results require another model request
@@ -157,13 +182,15 @@ class AgentSession:
             self._busy = False
             self._emit(AgentEndEvent(aborted=aborted))
 
-        if assistant is None:
-            assistant = AssistantMessage(
+        if ast_message is None:
+            # Aborted before the first response landed. Still record an assistant
+            # message so the branch never ends on a user turn with no reply.
+            ast_message = AssistantMessage(
                 content=[], model=self.provider.model, provider=self.provider.name,
                 stop_reason="aborted",
             )
-            self.session_manager.append(assistant)
-        return assistant
+            self.session_manager.append(ast_message)
+        return ast_message
 
     def abort(self) -> None:
         """Stop the active run after the current provider chunk / tool call."""
@@ -236,6 +263,7 @@ class AgentSession:
         return True
 
     def dispose(self) -> None:
+        """Lifecycle hook for embedders: stop whatever is running."""
         self.abort()
 
     # -- turns -------------------------------------------------------------------
@@ -256,9 +284,12 @@ class AgentSession:
                     try:
                         event = next(stream)
                     except StopIteration as stop:
+                        # The provider hands back the finished message as the
+                        # generator's return value, so the loop is also the return.
                         assistant: AssistantMessage = stop.value
                         break
                     self._emit(event)
+                # Counted before the error check: failed attempts still bill tokens.
                 self.usage.add(assistant.usage)
                 if assistant.stop_reason == "error":
                     # Retry without recording the failed attempt; the final
@@ -305,11 +336,19 @@ class AgentSession:
                 output=result.output,
                 is_error=result.is_error,
             )
+            # Appended per call, so an abort between two calls still leaves the
+            # earlier result beside its tool call rather than orphaned.
             self.session_manager.append(message)
             self._emit(ToolExecutionEndEvent(tool_call=call, result=message))
         return True
 
     def _execute_one(self, call: ToolCall) -> ToolResult:
+        """Run a single tool call, converting every failure into an error result.
+
+        Unknown tool, malformed arguments, schema violations, a policy block and a
+        raising tool all come back as `is_error=True` output instead of an
+        exception: the model gets to see what went wrong and try again.
+        """
         tool = self.tools.get(call.name)
         if tool is None:
             return ToolResult(output=f"Error: unknown tool: {call.name}", is_error=True)
