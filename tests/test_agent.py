@@ -9,6 +9,7 @@ from tau.events import (
     AgentStartEvent,
     ErrorEvent,
     MessageEndEvent,
+    MessageStartEvent,
     TextDeltaEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -365,6 +366,64 @@ def test_transient_error_is_retried(tmp_path, monkeypatch):
     assert provider.calls == 3
     assert final.stop_reason == "error"
     assert "503" in (final.error_message or "")
+
+
+def test_retry_starts_a_fresh_message(tmp_path, monkeypatch):
+    """A retried turn re-streams from its first token, so hosts must see one
+    MessageStartEvent per attempt to reset a half-rendered message."""
+    monkeypatch.setattr("tau.agent.RETRY_DELAYS", (0, 0, 0))
+
+    class FlakyProvider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_args, **_kwargs):
+            self.calls += 1
+            attempt = self.calls
+
+            def gen():
+                yield TextDeltaEvent(delta="partial ")
+                if attempt == 1:
+                    raise ProviderError("stream interrupted: boom")
+                return AssistantMessage(
+                    content=[TextContent(text="partial done")],
+                    model="fake-model",
+                    provider="fake",
+                )
+
+            return gen()
+
+    provider = FlakyProvider()
+    session = AgentSession(
+        provider=provider,
+        tools=[],
+        session_manager=SessionManager(directory=tmp_path),
+        system_prompt="test system prompt",
+    )
+    events = []
+    session.subscribe(events.append)
+
+    final = session.prompt("hi")
+
+    assert provider.calls == 2
+    assert final.text == "partial done"
+    assert [type(e) for e in events].count(MessageStartEvent) == 2
+
+
+def test_create_agent_session_binds_tools_to_the_requested_cwd(tmp_path, monkeypatch):
+    """Regression: `cwd` reached the system prompt and the policy guard but
+    not the tools, so relative writes landed in the process cwd."""
+    from tau import create_agent_session
+
+    monkeypatch.setenv("TAU_API_KEY", "test-key")
+    session = create_agent_session(cwd=str(tmp_path), persistent=False)
+
+    assert {getattr(tool, "cwd", None) for tool in session.tools.values()} == {
+        str(tmp_path)
+    }
 
 
 def failing_provider(reason):

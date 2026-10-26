@@ -196,7 +196,7 @@ def format_duration(seconds: float) -> str:
 def summarize_tool_call(
     theme: Theme, name: str, arguments: dict, width: int | None = None
 ) -> str:
-    """A one-line, tool-aware summary of the call's arguments."""
+    """A tool-aware summary of the call's arguments, one line where possible."""
     width = width or terminal_width()
     if not isinstance(arguments, dict):
         return theme.dim(_shorten(str(arguments), max(width - 10, 16)))
@@ -221,7 +221,13 @@ def summarize_tool_call(
         return theme.dim(path)
 
     if name == "bash":
-        return theme.dim(short(arg("command"), max(width - 10, 16)))
+        # The script is what the user is deciding to trust, so it is shown
+        # whole. One-liners ride on the header line; scripts move below it so
+        # every line shares one gutter (the header adds the newline).
+        lines = arg("command").splitlines()
+        if len(lines) == 1:
+            return theme.dim(lines[0])
+        return "\n".join(theme.dim("│ " + line) for line in lines)
 
     if name == "grep":
         pattern = short(arg("pattern", "?"), max(width - 34, 12))

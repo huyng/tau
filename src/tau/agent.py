@@ -273,9 +273,12 @@ class AgentSession:
 
     def _run_turn(self) -> AssistantMessage | None:
         """One model request: stream a response, record it, return it."""
-        self._emit(MessageStartEvent())
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
+            # Emitted per attempt, not once per turn: a retry re-streams the
+            # response from its first token, so hosts must reset their
+            # renderers instead of appending to a half-rendered message.
+            self._emit(MessageStartEvent())
             try:
                 stream = self.provider.stream(
                     self.system_prompt,

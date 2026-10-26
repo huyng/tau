@@ -1,6 +1,6 @@
 """Tests for the terminal presentation layer."""
 
-from tau.render import MarkdownRenderer, render_tool_result
+from tau.render import MarkdownRenderer, render_tool_result, summarize_tool_call
 from tau.theme import Theme, color_enabled
 
 
@@ -72,6 +72,16 @@ def test_diff_tool_result_is_colorized_and_summarized():
     assert "+1" in out and "−1" in out
     assert "-old line" in out
     assert "+new line" in out
+
+
+def test_bash_call_prints_the_whole_script():
+    script = "for f in *; do\n  echo \"$f\"\ndone"
+    out = summarize_tool_call(Theme(False), "bash", {"command": script}, 40)
+
+    assert out.splitlines() == ["│ for f in *; do", '│   echo "$f"', "│ done"]
+    # A long one-liner is a script too: no ellipsis, no width cut.
+    long = "echo " + "x" * 200
+    assert summarize_tool_call(Theme(False), "bash", {"command": long}, 40) == long
 
 
 def test_bash_result_shows_preview_and_exit_code():

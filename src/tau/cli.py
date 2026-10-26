@@ -157,7 +157,9 @@ class Repl:
         summary = summarize_tool_call(self.theme, call.name, call.arguments, self.width)
         head = self.theme.dim("╭─ ") + self.theme.bold(call.name)
         if summary:
-            head += " " + summary
+            # Multi-line summaries (bash scripts) carry their own gutter, so
+            # they start on the line below the tool name instead of beside it.
+            head += ("\n" if "\n" in summary else " ") + summary
         print(head, flush=True)
         self._tool_started[call.id] = time.monotonic()
         self._spinner.start(f"{call.name} …")

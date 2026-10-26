@@ -42,7 +42,7 @@ def create_agent_session(
     session_manager = SessionManager(in_memory=in_memory)
     return AgentSession(
         provider=provider,
-        tools=tools if tools is not None else default_tools(),
+        tools=tools if tools is not None else default_tools(cwd=cwd),
         session_manager=session_manager,
         system_prompt=build_system_prompt(cwd),
         cwd=cwd,
