@@ -7,6 +7,7 @@ Modes:
 
 import argparse
 import os
+import select
 import sys
 import time
 from collections.abc import Callable
@@ -247,13 +248,13 @@ class Repl:
         )
         while True:
             try:
-                line = input(theme.accent("» "))
-            except EOFError:
-                print()
-                break
+                line = self._read(theme.accent("» "))
             except KeyboardInterrupt:
                 print(theme.dim("(use /quit to exit)"))
                 continue
+            if line is None:
+                print()
+                break
 
             line = line.strip()
             if not line:
@@ -264,6 +265,29 @@ class Repl:
                 continue
 
             self._submit(line)
+
+    def _read(self, prompt: str) -> str | None:
+        """Read one prompt, sending a pasted block as a single message.
+
+        `input()` returns a single line, so a multi-line paste would turn into
+        one prompt per line. What is left of the paste is already queued in the
+        tty, so drain it while data is ready and join on newlines. Only a real
+        terminal behaves that way: with piped stdin the leftover lines sit in
+        Python's buffer, where the peek would miss them.
+        """
+        try:
+            first = input(prompt)
+        except EOFError:
+            return None
+        if not sys.stdin.isatty():
+            return first
+        lines = [first]
+        while select.select([sys.stdin], [], [], 0)[0]:
+            try:
+                lines.append(input())
+            except EOFError:
+                break
+        return "\n".join(lines)
 
     def _submit(self, text: str) -> None:
         started = time.monotonic()
