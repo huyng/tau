@@ -155,33 +155,73 @@ class MarkdownRenderer:
 
 
 class GutterWriter:
-    """Prefix every line of a stream with a dim gutter (used for reasoning)."""
+    """Prefix every line of a stream with a dim gutter (used for reasoning).
 
-    def __init__(self, theme: Theme, prefix: str = "│ ", style: str = ""):
+    Lines are wrapped here instead of by the terminal, so the remainder keeps
+    its gutter rather than running back to column zero. Text is held until a
+    line is full, so breaks land on spaces; reasoning therefore arrives a line
+    at a time, the same granularity as ``MarkdownRenderer``.
+
+    A ``label`` frames the stream the way a tool block is framed, so reasoning
+    does not read as a continuation of the tool output above it.
+    """
+
+    def __init__(
+        self,
+        theme: Theme,
+        prefix: str = "│ ",
+        style: str = "",
+        width: int | None = None,
+        label: str | None = None,
+    ):
         self.theme = theme
         self.prefix = theme.dim(prefix)
+        self.blank = theme.dim(prefix.rstrip())
         self.style = style
-        self._at_line_start = True
+        # One column stays free: filling the last one makes the terminal wrap,
+        # and the newline we print would then break the line twice.
+        self.room = max((width or terminal_width()) - len(prefix) - 1, 1)
+        self.label = label
+        self._pending = ""  # the line in progress, not yet printed
+        self._started = False
 
     def feed(self, delta: str) -> str:
         out: list[str] = []
         for index, part in enumerate(delta.split("\n")):
-            if index:
-                out.append("\n")
-                self._at_line_start = True
-            if not part:
-                continue
-            if self._at_line_start:
-                out.append(self.prefix)
-                self._at_line_start = False
-            out.append(self.theme.paint(part, self.style) if self.style else part)
+            if index:  # the newline ends whatever the line held
+                out.append(self._line(self._pending))
+                self._pending = ""
+            self._pending += part
+            while len(self._pending) > self.room:
+                cut = self._pending.rfind(" ", 0, self.room + 1)
+                if cut <= 0:  # a single word wider than the margin
+                    cut = self.room
+                out.append(self._line(self._pending[:cut]))
+                self._pending = self._pending[cut:].lstrip(" ")
         return "".join(out)
 
-    def flush(self) -> str:
-        if self._at_line_start:
+    def _line(self, text: str) -> str:
+        """Prefix and terminate one line. Blank lines keep a bare gutter so
+        the column stays continuous; an empty line before any content is
+        dropped, which keeps nothing above the frame header."""
+        if not text and not self._started:
             return ""
-        self._at_line_start = True
-        return "\n"
+        head = ""
+        if self.label and not self._started:
+            head = self.theme.dim("╭─ ") + self.theme.bold(self.label) + "\n"
+        self._started = True
+        body = self.theme.paint(text, self.style) if text and self.style else text
+        return head + (self.prefix if text else self.blank) + body + "\n"
+
+    def flush(self) -> str:
+        """Print the tail and close the frame. Silent if nothing streamed, so
+        callers can flush unconditionally."""
+        out = self._line(self._pending) if self._pending else ""
+        if self.label and self._started:
+            out += self.theme.dim("╰─") + "\n"
+        self._pending = ""
+        self._started = False
+        return out
 
 
 # -- tool activity ---------------------------------------------------------------

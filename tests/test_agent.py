@@ -506,6 +506,8 @@ def test_repl_renders_text_and_reasoning_deltas(capsys):
 
     out = capsys.readouterr().out
     assert "thinking... " in out
+    assert "╭─ thinking\n" in out
+    assert "╰─\n" in out
     assert "Hello there" in out
     assert out.endswith("\n")
 

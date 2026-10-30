@@ -1,6 +1,11 @@
 """Tests for the terminal presentation layer."""
 
-from tau.render import MarkdownRenderer, render_tool_result, summarize_tool_call
+from tau.render import (
+    GutterWriter,
+    MarkdownRenderer,
+    render_tool_result,
+    summarize_tool_call,
+)
 from tau.theme import Theme, color_enabled
 
 
@@ -55,6 +60,73 @@ def test_markdown_fence_closes_on_flush():
 def test_colors_are_emitted_when_enabled():
     out = MarkdownRenderer(Theme(True), width=60).feed("`code` and **bold**\n")
     assert "\x1b[" in out
+
+
+def test_gutter_stays_continuous_across_blank_lines():
+    writer = GutterWriter(Theme(False))
+    out = writer.feed("one\n\ntwo") + writer.flush()
+
+    assert out == "│ one\n│\n│ two\n"
+
+
+def test_gutter_holds_across_blank_line_split_over_deltas():
+    writer = GutterWriter(Theme(False))
+    out = writer.feed("one\n") + writer.feed("\n") + writer.feed("two") + writer.flush()
+
+    assert out == "│ one\n│\n│ two\n"
+
+
+def test_gutter_blank_line_is_dimmed_without_trailing_space():
+    out = GutterWriter(Theme(True)).feed("one\n\ntwo")
+
+    assert "\x1b[2m│\x1b[0m\n" in out
+
+
+def test_gutter_wraps_long_lines_at_width():
+    writer = GutterWriter(Theme(False), width=20)
+    out = writer.feed("x" * 45) + writer.flush()
+
+    # One column under the width, so the terminal never wraps the line itself.
+    assert out == "│ " + "x" * 17 + "\n│ " + "x" * 17 + "\n│ " + "x" * 11 + "\n"
+
+
+def test_gutter_breaks_on_spaces_not_mid_word():
+    writer = GutterWriter(Theme(False), width=20)
+    out = writer.feed("alpha beta gamma delta\n")
+
+    assert out == "│ alpha beta gamma\n│ delta\n"
+
+
+def test_gutter_wraps_when_a_delta_lands_on_the_margin():
+    writer = GutterWriter(Theme(False), width=20)
+    out = writer.feed("x" * 18) + writer.feed("y") + writer.flush()
+
+    assert out == "│ " + "x" * 17 + "\n│ xy\n"
+
+
+def test_gutter_frames_a_labelled_stream():
+    writer = GutterWriter(Theme(False), label="thinking")
+    out = writer.feed("one") + writer.feed("\ntwo") + writer.flush()
+
+    assert out == "╭─ thinking\n│ one\n│ two\n╰─\n"
+
+
+def test_gutter_frame_closes_after_a_trailing_newline():
+    writer = GutterWriter(Theme(False), label="thinking")
+    out = writer.feed("one\n") + writer.flush()
+
+    assert out == "╭─ thinking\n│ one\n╰─\n"
+
+
+def test_gutter_drops_blank_lines_before_the_header():
+    writer = GutterWriter(Theme(False), label="thinking")
+    out = writer.feed("\n\none") + writer.flush()
+
+    assert out == "╭─ thinking\n│ one\n╰─\n"
+
+
+def test_gutter_flush_is_silent_when_nothing_streamed():
+    assert GutterWriter(Theme(False), label="thinking").flush() == ""
 
 
 def test_diff_tool_result_is_colorized_and_summarized():

@@ -88,9 +88,10 @@ class Repl:
         self.session.subscribe(self._on_event)
         self._text_started = False
         self._text_ends_newline = False
-        self._reasoning_started = False
         self._renderer = MarkdownRenderer(self.theme, self.width)
-        self._reasoning = GutterWriter(self.theme, style=DIM)
+        self._reasoning = GutterWriter(
+            self.theme, style=DIM, width=self.width, label="thinking"
+        )
         self._tool_started: dict[str, float] = {}
         self._spinner = Spinner()
         self._handlers: dict[type, Callable[..., None]] = {
@@ -124,16 +125,18 @@ class Repl:
     def _on_message_start(self, _event: MessageStartEvent) -> None:
         self._text_started = False
         self._text_ends_newline = False
-        self._reasoning_started = False
+        # A resize between turns should land here rather than mid-line.
+        self.width = terminal_width()
         self._renderer = MarkdownRenderer(self.theme, self.width)
-        self._reasoning = GutterWriter(self.theme, style=DIM)
+        self._reasoning = GutterWriter(
+            self.theme, style=DIM, width=self.width, label="thinking"
+        )
         self._spinner.start(f"{self.session.provider.model} · thinking")
 
     def _on_reasoning_delta(self, event: ReasoningDeltaEvent) -> None:
         self._spinner.stop()
         if self.show_thinking:
             print(self._reasoning.feed(event.delta), end="", flush=True)
-            self._reasoning_started = True
 
     def _on_text_delta(self, event: TextDeltaEvent) -> None:
         self._spinner.stop()
@@ -222,9 +225,7 @@ class Repl:
             print(self.theme.warning("[aborted]"), flush=True)
 
     def _finish_reasoning(self) -> None:
-        if self._reasoning_started:
-            print(self._reasoning.flush(), end="", flush=True)
-            self._reasoning_started = False
+        print(self._reasoning.flush(), end="", flush=True)
 
     def _finish_text(self, text: str | None = None) -> None:
         if not self._text_started:
