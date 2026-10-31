@@ -80,4 +80,7 @@ ipython_config.py
 *.log
 *.sqlite3
 
+# Personal notes
+.notes/
+
 AGENTS.md
