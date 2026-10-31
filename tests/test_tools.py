@@ -3,7 +3,7 @@ edit tool's offset-based application and unified-diff output."""
 
 import pytest
 
-from tau.tools.bash import MAX_OUTPUT_LINES, BashTool
+from tau.tools.bash import MAX_OUTPUT_BYTES, MAX_OUTPUT_LINES, BashTool
 from tau.tools.edit import MAX_DIFF_LINES, EditTool, WriteTool
 from tau.tools.read import MAX_LINES, ReadTool
 from tau.tools.validation import validate_arguments
@@ -278,6 +278,18 @@ def test_bash_keeps_the_last_lines_when_truncating(bash):
     assert f"... {over + 1 - MAX_OUTPUT_LINES} lines skipped ..." in result.output
     assert f"\n{over}\n[exit code: 0]" in result.output  # newest lines + status kept
     assert "\n1\n" not in result.output  # oldest lines dropped
+
+
+def test_bash_caps_bytes_on_a_single_huge_line(bash):
+    """The line cap cannot bound output on its own: one line can be megabytes."""
+    result = bash.execute(
+        command="awk 'BEGIN { for (i = 0; i < 60000; i++) printf \"x\" }'"
+    )
+
+    assert "bytes skipped ..." in result.output
+    assert len(result.output.encode()) < MAX_OUTPUT_BYTES + 100
+    assert result.output.endswith("[exit code: 0]")  # status survives the cut
+    assert "x" * 1000 in result.output  # the tail, not the head, is kept
 
 
 def test_bash_empty_output_still_reports_exit_code(bash):

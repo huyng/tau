@@ -7,6 +7,7 @@ from typing import Any, BinaryIO
 from .base import Tool, ToolResult
 
 MAX_OUTPUT_LINES = 2000
+MAX_OUTPUT_BYTES = 50 * 1024
 DEFAULT_TIMEOUT = 120
 
 #: Variables a child process never needs, and that must not reach its output.
@@ -50,19 +51,32 @@ def _combined(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
     return out or err
 
 
-def _keep_last_lines(output: str) -> str:
+def _truncate(output: str) -> str:
+    """Keep the tail of the output: a command that fails says why in its last
+    lines, and the head of a long log is rarely worth the context."""
     lines = output.splitlines()
-    if len(lines) <= MAX_OUTPUT_LINES:
+    if len(lines) > MAX_OUTPUT_LINES:
+        skipped = len(lines) - MAX_OUTPUT_LINES
+        output = f"... {skipped} lines skipped ...\n" + "\n".join(lines[-MAX_OUTPUT_LINES:])
+    data = output.encode("utf-8", errors="replace")
+    if len(data) <= MAX_OUTPUT_BYTES:
         return output
-    skipped = len(lines) - MAX_OUTPUT_LINES
-    return f"... {skipped} lines skipped ...\n" + "\n".join(lines[-MAX_OUTPUT_LINES:])
+    # The line cap alone does not bound the result: one line of minified JSON,
+    # a base64 blob, or binary junk can be megabytes on its own.
+    # The byte cut lands mid-line; the marker's newline keeps the fragment from
+    # reading as a continuation of the marker itself.
+    kept = data[-MAX_OUTPUT_BYTES:]
+    return f"... {len(data) - len(kept)} bytes skipped ...\n" + kept.decode(
+        "utf-8", errors="replace"
+    )
 
 
 class BashTool(Tool):
     name = "bash"
     description = (
         "Execute a bash command in the current working directory. Returns "
-        "stdout and stderr; output is truncated to the last 2000 lines."
+        f"stdout and stderr; output is truncated to the last {MAX_OUTPUT_LINES} "
+        f"lines or {MAX_OUTPUT_BYTES // 1024}KB (whichever is hit first)."
     )
     parameters = {
         "type": "object",
@@ -103,11 +117,11 @@ class BashTool(Tool):
                 if not partial:
                     return ToolResult(header, is_error=True)
                 return ToolResult(
-                    _keep_last_lines(f"{header}\nPartial output:\n{partial}"),
+                    _truncate(f"{header}\nPartial output:\n{partial}"),
                     is_error=True,
                 )
 
             output = _combined(_read(out), _read(err))
         status = f"[exit code: {proc.returncode}]"
         output = f"{output}\n{status}" if output else status
-        return ToolResult(_keep_last_lines(output), is_error=proc.returncode != 0)
+        return ToolResult(_truncate(output), is_error=proc.returncode != 0)
