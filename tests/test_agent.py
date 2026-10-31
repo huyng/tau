@@ -585,7 +585,7 @@ def test_default_guard_blocks_before_execute(tmp_path):
         content=[
             ToolCall(
                 id="c1", name="write",
-                arguments={"path": "../escape.txt", "content": "x"},
+                arguments={"path": "/etc/escape.txt", "content": "x"},
             )
         ],
         model="fake-model",

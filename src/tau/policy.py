@@ -10,6 +10,7 @@ determined one.
 
 import os
 import shlex
+import tempfile
 from collections.abc import Callable
 from pathlib import PurePath
 
@@ -70,6 +71,23 @@ def _inside(path: str, cwd: str) -> bool:
         return False
 
 
+def _writable(path: str, roots: tuple[str, ...]) -> bool:
+    """True if ``path`` sits strictly inside one of ``roots``.
+
+    Strictly, so that naming a scratch dir does not make ``rm -rf <that dir>``
+    legal, and so ``rm -rf .`` is refused from the working directory.
+    """
+    return any(path != root and _inside(path, root) for root in roots)
+
+
+def _allowed(roots: tuple[str, ...]) -> str:
+    """Name the writable roots for a refusal message.
+
+    A refusal that names the alternative stops the model repeating the call.
+    """
+    return " or ".join(roots)
+
+
 def _tokens(command: str) -> list[str] | None:
     """Split a command into words, re-splitting quoted payloads.
 
@@ -102,11 +120,12 @@ def _mentions_credentials(command: str, cwd: str) -> str | None:
     return None
 
 
-def _rm_outside(command: str, cwd: str) -> str | None:
-    """Refuse ``rm`` whose targets resolve outside ``cwd``.
+def _rm_outside(command: str, roots: tuple[str, ...]) -> str | None:
+    """Refuse ``rm`` whose targets resolve outside ``roots``.
 
     Matching flags as strings cannot enumerate their spellings (``-rf``,
-    ``-r -f``, ``--recursive --force``), so look at targets instead.
+    ``-r -f``, ``--recursive --force``), so look at targets instead. Relative
+    targets resolve against ``roots[0]``, the working directory.
     """
     tokens = _tokens(command) or ()
     for i, token in enumerate(tokens):
@@ -115,15 +134,29 @@ def _rm_outside(command: str, cwd: str) -> str | None:
         for target in tokens[i + 1 :]:
             if target.startswith("-"):
                 continue
-            resolved = _resolve(target, cwd)
-            if not _inside(resolved, cwd):
-                return f"rm targets {resolved} outside {cwd}"
+            resolved = _resolve(target, roots[0])
+            if not _writable(resolved, roots):
+                return f"rm targets {resolved}, only {_allowed(roots)} may be deleted"
     return None
 
 
-def basic_guard(cwd: str | None = None, deny: frozenset[str] = frozenset()) -> Guard:
-    """Refuse denied tools, writes outside ``cwd``, and destructive commands."""
+def basic_guard(
+    cwd: str | None = None,
+    deny: frozenset[str] = frozenset(),
+    scratch: tuple[str, ...] | None = None,
+) -> Guard:
+    """Refuse denied tools, writes outside the tree, and destructive commands.
+
+    ``scratch`` names extra writable roots, defaulting to the system temp dirs.
+    Scratch work belongs there, and refusing it only pushes the same write into
+    ``bash``, which this guard cannot follow into a shell. Refusals name the
+    writable space for the same reason: a bare "no" invites the retry.
+    """
     root = os.path.realpath(cwd or os.getcwd())
+    if scratch is None:
+        # Both, because $TMPDIR on macOS is not /tmp and the model uses either.
+        scratch = (os.path.realpath("/tmp"), os.path.realpath(tempfile.gettempdir()))
+    roots = tuple(dict.fromkeys((root, *(os.path.realpath(path) for path in scratch))))
 
     def guard(call: ToolCall) -> str | None:
         if call.name in deny:
@@ -133,8 +166,8 @@ def basic_guard(cwd: str | None = None, deny: frozenset[str] = frozenset()) -> G
             path = call.arguments.get("path")
             if isinstance(path, str):
                 target = _resolve(path, root)
-                if not _inside(target, root):
-                    return f"{call.name} may only write inside {root} (got {target})"
+                if not _writable(target, roots):
+                    return f"{call.name} may only write inside {_allowed(roots)} (got {target})"
 
         elif call.name in _READ_TOOLS:
             for value in call.arguments.values():
@@ -151,7 +184,7 @@ def basic_guard(cwd: str | None = None, deny: frozenset[str] = frozenset()) -> G
                 for bad in _BASH_DENY:
                     if bad in lowered:
                         return f"command contains {bad!r}"
-                if refusal := _rm_outside(command, root):
+                if refusal := _rm_outside(command, roots):
                     return refusal
                 if refusal := _mentions_credentials(command, root):
                     return refusal
