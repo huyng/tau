@@ -80,7 +80,7 @@ class AgentSession:
         # A shared event lets a parent and its sub-agents abort together.
         self._abort_event = abort_event if abort_event is not None else threading.Event()
         self._busy = False
-        self._compaction_blocked = False  # at most one compaction attempt per run
+        self._compaction_blocked = False  # at most one *failed* compaction per run
         self.usage = Usage()  # cumulative totals across runs
 
         for tool in self.tools.values():
@@ -204,11 +204,29 @@ class AgentSession:
 
     # -- compaction ------------------------------------------------------------
 
+    def _context_tokens(self) -> int:
+        """Size of the next request in tokens, as far as we can tell.
+
+        The provider reports the real prompt size (`usage.input`) for the last
+        request, and everything appended since then is a handful of messages, so
+        that number plus a cheap estimate of the tail beats estimating the whole
+        branch: chars-per-token drifts by 15-50% on code-heavy transcripts, and
+        the estimate also counts reasoning blocks the request no longer carries
+        for finished turns. Falls back to the estimate in a fresh session or one
+        resumed from a log without usage.
+        """
+        messages = self.messages
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if isinstance(message, AssistantMessage) and message.usage.input:
+                return message.usage.input + estimate_tokens(messages[index + 1 :])
+        return estimate_tokens(messages)
+
     def _maybe_compact(self) -> bool:
         """Compact before a turn if the branch is over the token threshold."""
         if not self.compaction.enabled or self._compaction_blocked:
             return False
-        tokens = estimate_tokens(self.messages)
+        tokens = self._context_tokens()
         if tokens < self.compaction.threshold_tokens:
             return False
         return self.compact(tokens)

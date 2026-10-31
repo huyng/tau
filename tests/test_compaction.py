@@ -92,7 +92,7 @@ def final_text(messages) -> str:
     return ""
 
 
-def build_history(manager, turns: int) -> None:
+def build_history(manager, turns: int, usage_input: int = 0) -> None:
     for index in range(turns):
         manager.append(UserMessage(content=f"question {index} " + "x" * 400))
         manager.append(
@@ -100,6 +100,7 @@ def build_history(manager, turns: int) -> None:
                 content=[TextContent(text=f"answer {index} " + "y" * 400)],
                 model="fake",
                 provider="fake",
+                usage=Usage(input=usage_input),
             )
         )
 
@@ -259,6 +260,43 @@ def test_no_compaction_below_the_threshold():
 
     assert len(provider.requests) == 1
     assert not user_texts(session.messages)[0].startswith(SUMMARY_PREFIX)
+
+
+def test_compaction_triggers_on_measured_prompt_tokens():
+    # ~400 tokens by the char estimate, 120k as billed by the provider. Trusting
+    # the estimate here is how requests ran past the budget the threshold exists
+    # to enforce.
+    session, provider = make_session(
+        [reply("SUM"), reply("final")], threshold_tokens=100_000
+    )
+    build_history(session.session_manager, 3, usage_input=120_000)
+
+    session.prompt("next question")
+
+    assert len(summary_requests(provider)) == 1
+    assert user_texts(session.messages)[0].startswith(SUMMARY_PREFIX)
+
+
+def test_compaction_trusts_measured_usage_over_a_char_heavy_estimate():
+    # The estimate reads this branch as ~10k tokens; the provider billed 1k for
+    # it. Compacting on the estimate discards history that already fits.
+    session, provider = make_session([reply("final")], threshold_tokens=5_000)
+    manager = session.session_manager
+    for index in range(3):
+        manager.append(UserMessage(content=f"question {index}"))
+        manager.append(
+            AssistantMessage(
+                content=[TextContent(text="z" * 40_000 if index == 2 else "answer")],
+                model="fake",
+                provider="fake",
+                usage=Usage(input=1_000),
+            )
+        )
+
+    session.prompt("next")
+
+    assert summary_requests(provider) == []
+    assert len(provider.requests) == 1
 
 
 def test_disabled_compaction_never_calls_the_provider():
