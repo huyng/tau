@@ -1,7 +1,11 @@
 """System prompt assembly: base instructions plus discovered context files.
 
 Like pi, tau builds the system prompt from base instructions and context
-files (AGENTS.md) discovered in the working directory and its ancestors.
+files (AGENTS.md) discovered in the working directory and its ancestors, plus
+a user-level AGENTS.md in ~/.agents. When both scopes carry instructions the
+prompt says so instead of merging them: a personal default and a project
+override can disagree, and hiding that would leave the model silently
+following whichever one happened to be concatenated last.
 """
 
 import os
@@ -44,15 +48,48 @@ def find_context_file(cwd: str | None) -> str | None:
         directory = parent
 
 
+def read_instructions(path: str | None) -> str:
+    """Read a context file; unreadable or blank files count as absent."""
+    if not path:
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def context_files(cwd: str | None) -> list[tuple[str, str, str]]:
+    """The AGENTS.md files that apply here as (path, scope, text), user first."""
+    user_file = os.path.expanduser("~/.agents/AGENTS.md")
+    project_file = find_context_file(cwd)
+    if project_file == user_file:  # cwd inside ~/.agents: same file, one scope
+        project_file = None
+
+    sections: list[tuple[str, str, str]] = []
+    if text := read_instructions(user_file):
+        sections.append((user_file, "User", text))
+    if project_file and (text := read_instructions(project_file)):
+        sections.append((project_file, "Project", text))
+    return sections
+
+
 def build_system_prompt(cwd: str | None = None) -> str:
     prompt = BASE_SYSTEM_PROMPT.format(cwd=os.path.abspath(cwd or os.getcwd()))
-    context_file = find_context_file(cwd)
-    if context_file:
-        try:
-            with open(context_file, "r", encoding="utf-8") as f:
-                instructions = f.read().strip()
-            if instructions:
-                prompt += f"\n# Project instructions\n\nFrom {context_file}:\n\n{instructions}\n"
-        except OSError:
-            pass
+    sections = context_files(cwd)
+
+    if len(sections) == 2:
+        prompt += (
+            "\n# Instructions\n\n"
+            f"Two AGENTS.md files apply: {sections[0][0]} is the user's personal "
+            f"default, {sections[1][0]} is project-level for this repository. "
+            "Both are quoted below. Follow the project file wherever it is more "
+            "specific; fall back to the user file where it is silent; if they "
+            "outright conflict, say so rather than picking silently.\n"
+        )
+    elif sections:
+        prompt += f"\n# {sections[0][1]} instructions\n"
+
+    for path, _, text in sections:
+        prompt += f"\nFrom {path}:\n\n{text}\n"
     return prompt

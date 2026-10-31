@@ -93,8 +93,10 @@ A session is tau's record of a conversation. The pieces mirror pi:
   with `TAU_SESSIONS_DIR`). Each entry has an id and a parent, so history forms
   a tree whose active branch supplies model context (pointer lines record the
   active leaf).
-- **System prompt** — base instructions plus the nearest `AGENTS.md`
-  discovered from the working directory upward.
+- **System prompt** — base instructions plus `AGENTS.md` files: the user's
+  `~/.agents/AGENTS.md` and the nearest one discovered from the working
+  directory upward. When both exist the prompt names both and their
+  precedence, so the model reconciles user and project preferences.
 - **Tools** — `read`, `grep`, `glob`, `bash`, `edit`, `write`, `task`, bound
   to the working directory. Tools run with the permissions of the tau process.
 - **Search** — `grep` and `glob` walk the tree in Python (no ripgrep

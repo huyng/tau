@@ -29,7 +29,7 @@ from .events import (
     ToolExecutionStartEvent,
     ToolNameEvent,
 )
-from .prompts import build_system_prompt
+from .prompts import build_system_prompt, context_files
 from .provider import MissingCredentialsError, OpenAIProvider
 from .render import (
     GutterWriter,
@@ -244,9 +244,11 @@ class Repl:
         theme = self.theme
         print(
             f"{theme.bold('tau')} {theme.dim('v' + __version__)} {theme.dim('·')} "
-            f"{theme.model(self.session.provider.model)} {theme.dim('·')} "
-            f"{theme.dim(str(self.session.session_manager.file))}"
+            f"{theme.model(self.session.provider.model)}"
         )
+        print(theme.dim(f"  • session {self.session.session_manager.file}"))
+        for path, scope, _ in context_files(self.session.cwd):
+            print(theme.dim(f"  • {scope.lower()} AGENTS.md {path}"))
         while True:
             try:
                 line = self._read(theme.accent("» "))
