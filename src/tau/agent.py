@@ -167,14 +167,18 @@ class AgentSession:
             while True:
                 self._maybe_compact()
                 asst_message = self._run_turn()
-                if asst_message is None or self._abort_event.is_set():
+                if asst_message is None:
                     aborted = True
                     break
                 if asst_message.stop_reason == "toolUse" and asst_message.tool_calls:
+                    # Runs even when an abort is already pending: the calls it
+                    # skips still need results before the branch can be sent again.
                     if not self._execute_tool_calls(asst_message):
                         aborted = True  # aborted between tool calls
                         break
                     continue  # tool results require another model request
+                if asst_message.stop_reason == "aborted" or self._abort_event.is_set():
+                    aborted = True
                 break
         except KeyboardInterrupt:
             aborted = True
@@ -331,11 +335,21 @@ class AgentSession:
 
     def _execute_tool_calls(self, assistant: AssistantMessage) -> bool:
         """Execute each tool call and record the results. False if aborted."""
-        for call in assistant.tool_calls:
-            if self._abort_event.is_set():
-                return False
+        calls = assistant.tool_calls
+        for index, call in enumerate(calls):
+            # Emitted before the abort check so every announced call is closed on
+            # the far side too, even when it never runs.
             self._emit(ToolExecutionStartEvent(tool_call=call))
-            result = self._execute_one(call)
+            if self._abort_event.is_set():
+                self._abandon(calls[index:])
+                return False
+            try:
+                result = self._execute_one(call)
+            except KeyboardInterrupt:
+                # Ctrl-C inside a tool: the call that was running must still be
+                # answered before the interrupt is allowed to unwind.
+                self._abandon(calls[index:])
+                raise
             message = ToolResultMessage(
                 tool_call_id=call.id,
                 tool_name=call.name,
@@ -347,6 +361,23 @@ class AgentSession:
             self.session_manager.append(message)
             self._emit(ToolExecutionEndEvent(tool_call=call, result=message))
         return True
+
+    def _abandon(self, calls: list[ToolCall]) -> None:
+        """Record a result for calls that will never run.
+
+        Every tool call needs a result on the branch: OpenAI-compatible providers
+        reject the next request when an assistant message's tool calls are not all
+        answered, so a single interrupt would otherwise end the session for good.
+        """
+        for call in calls:
+            message = ToolResultMessage(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                output="Error: aborted before the tool ran",
+                is_error=True,
+            )
+            self.session_manager.append(message)
+            self._emit(ToolExecutionEndEvent(tool_call=call, result=message))
 
     def _execute_one(self, call: ToolCall) -> ToolResult:
         """Run a single tool call, converting every failure into an error result.

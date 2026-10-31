@@ -269,8 +269,52 @@ def test_abort_prevents_tool_execution(tmp_path):
 
     assert final.stop_reason == "toolUse"  # message completed
     assert tool.calls == []  # but tools never ran
+    # The call still needs a result, or the next request is rejected outright.
     last = session.messages[-1]
-    assert isinstance(last, AssistantMessage)  # no tool result was appended
+    assert isinstance(last, ToolResultMessage)
+    assert (last.tool_call_id, last.is_error) == ("c1", True)
+
+
+def test_interrupt_inside_a_tool_answers_every_call(tmp_path):
+    """Ctrl-C mid-turn must leave a result for each call the turn announced."""
+
+    class InterruptingTool(Tool):
+        name = "echo"
+        description = "Interrupts instead of running."
+        parameters = {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        }
+
+        def execute(self, text: str, **_: Any) -> ToolResult:
+            raise KeyboardInterrupt
+
+    turn = AssistantMessage(
+        content=[
+            ToolCall(id="c1", name="echo", arguments={"text": "one"}),
+            ToolCall(id="c2", name="echo", arguments={"text": "two"}),
+        ],
+        model="fake-model",
+        provider="fake",
+        stop_reason="toolUse",
+    )
+    manager = SessionManager(directory=tmp_path)
+    manager.new_session()
+    session = AgentSession(
+        provider=FakeProvider([turn]),
+        tools=[InterruptingTool()],
+        session_manager=manager,
+        system_prompt="test system prompt",
+        cwd=str(tmp_path),
+    )
+
+    final = session.prompt("interrupt me")
+
+    assert final.stop_reason == "toolUse"
+    results = [m for m in session.messages if isinstance(m, ToolResultMessage)]
+    assert [r.tool_call_id for r in results] == ["c1", "c2"]
+    assert all(r.is_error for r in results)
 
 
 def test_abort_during_retry_stops_without_another_request(tmp_path):

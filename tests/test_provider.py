@@ -405,6 +405,31 @@ def test_tool_call_deltas_accumulate_across_chunks():
     assert message.tool_calls[0].arguments == {"path": "a.py"}
 
 
+def test_request_omits_an_assistant_message_with_no_content():
+    provider = OpenAIProvider(
+        model="deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="test-key",
+        transport=FakeTransport([]),
+    )
+    aborted = AssistantMessage(content=[], model="m", provider="openai", stop_reason="aborted")
+
+    request = provider._request_messages(
+        "system", [UserMessage(content="hi"), aborted, UserMessage(content="again")]
+    )
+
+    assert [as_dict(entry)["role"] for entry in request] == ["system", "user", "user"]
+
+
+def test_stream_that_yields_no_text_has_no_empty_text_block():
+    provider, _ = make_provider([chunk(finish_reason="stop")])
+
+    _, message = collect(provider, [UserMessage(content="hi")])
+
+    assert message.content == []
+    assert message.stop_reason == "stop"
+
+
 def test_missing_credentials_raise_at_construction(monkeypatch):
     for var in ("TAU_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.delenv(var, raising=False)

@@ -259,6 +259,11 @@ class OpenAIProvider:
                     entry["reasoning_content"] = message.reasoning_content
                 if calls:
                     entry["tool_calls"] = calls
+                if not entry.get("content") and "tool_calls" not in entry:
+                    # An aborted or failed turn leaves an assistant message with
+                    # nothing in it. Providers reject that shape outright, and it
+                    # carries nothing a later request needs.
+                    continue
                 request.append(entry)
             elif isinstance(message, ToolResultMessage):
                 request.append(
@@ -398,7 +403,11 @@ class OpenAIProvider:
             # Deterministic: drop the connection instead of draining it.
             _close_stream(chunks)
 
-        content: list[TextContent | ToolCall] = [TextContent(text="".join(text_parts))]
+        content: list[TextContent | ToolCall] = []
+        # No empty text block when nothing was streamed: it would be the whole
+        # content of an interrupted turn, which providers reject.
+        if text := "".join(text_parts):
+            content.append(TextContent(text=text))
         for index in sorted(tool_calls):
             acc = tool_calls[index]
             try:
