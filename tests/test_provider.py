@@ -102,8 +102,8 @@ def test_reasoning_is_streamed_stored_and_sent_back():
     assert message.stop_reason == "stop"
     assert message.usage.total_tokens == 15
 
-    # DeepSeek requires reasoning_content on prior assistant turns when tools
-    # are present. Verify it survives serialization and request construction.
+    # DeepSeek needs reasoning_content echoed for the in-flight turn, so it has to
+    # survive serialization and request construction; finished turns drop it.
     data = serialize_message(message)
     assert data["reasoningContent"] == "Let me think."
     restored = deserialize_message(data)
@@ -403,6 +403,37 @@ def test_tool_call_deltas_accumulate_across_chunks():
     assert [e.name for e in events if isinstance(e, ToolNameEvent)] == ["read"]
     assert message.stop_reason == "toolUse"
     assert message.tool_calls[0].arguments == {"path": "a.py"}
+
+
+def test_reasoning_from_finished_turns_is_not_sent_back():
+    provider, _ = make_provider([])
+    first = AssistantMessage(
+        content=[ToolCall(id="c1", name="read", arguments={"path": "a.py"})],
+        model="deepseek-flash",
+        provider="openai",
+        stop_reason="toolUse",
+        reasoning_content="first thoughts",
+    )
+    second = AssistantMessage(
+        content=[ToolCall(id="c2", name="read", arguments={"path": "b.py"})],
+        model="deepseek-flash",
+        provider="openai",
+        stop_reason="toolUse",
+        reasoning_content="recent thoughts",
+    )
+
+    request = provider._request_messages(
+        "system",
+        [
+            UserMessage(content="go"),
+            first,
+            ToolResultMessage(tool_call_id="c1", tool_name="read", output="ok"),
+            second,
+        ],
+    )
+
+    assert "reasoning_content" not in as_dict(request[2])
+    assert as_dict(request[4])["reasoning_content"] == "recent thoughts"
 
 
 def test_request_omits_an_assistant_message_with_no_content():

@@ -236,7 +236,15 @@ class OpenAIProvider:
         request: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt}
         ]
-        for message in messages:
+        # Only the trailing assistant message is still in flight. Echoing reasoning
+        # for finished turns is dead weight — no model reads it again, and it was
+        # ~40% of all input tokens. Dropping the earlier blocks also leaves the
+        # request prefix stable enough for provider-side caching.
+        in_flight = max(
+            (index for index, m in enumerate(messages) if isinstance(m, AssistantMessage)),
+            default=-1,
+        )
+        for index, message in enumerate(messages):
             if isinstance(message, UserMessage):
                 request.append({"role": "user", "content": message.content})
             elif isinstance(message, AssistantMessage):
@@ -254,7 +262,11 @@ class OpenAIProvider:
                 entry: dict[str, Any] = {"role": "assistant"}
                 if message.text:
                     entry["content"] = message.text
-                if message.reasoning_content and self.pass_reasoning_content:
+                if (
+                    index == in_flight
+                    and message.reasoning_content
+                    and self.pass_reasoning_content
+                ):
                     # DeepSeek-only field: outside the OpenAI request schema.
                     entry["reasoning_content"] = message.reasoning_content
                 if calls:
