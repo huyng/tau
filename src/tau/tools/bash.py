@@ -1,7 +1,8 @@
 import os
 import re
 import subprocess
-from typing import Any
+import tempfile
+from typing import Any, BinaryIO
 
 from .base import Tool, ToolResult
 
@@ -34,6 +35,12 @@ def _text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _read(handle: BinaryIO) -> str:
+    """Everything written to a child's output file so far."""
+    handle.seek(0)
+    return _text(handle.read())
 
 
 def _combined(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
@@ -73,31 +80,34 @@ class BashTool(Tool):
         self, command: str, timeout: int | None = None, **_: Any
     ) -> ToolResult:
         timeout_seconds = timeout or DEFAULT_TIMEOUT
-        try:
-            proc = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.cwd,
-                env=_child_env(),
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as expired:
-            # Whatever the command produced before the deadline is still
-            # valuable — a build that fails at 95% has already said why.
-            # (These attributes arrive as bytes even when text=True.)
-            partial = _combined(expired.stdout, expired.stderr)
-            header = f"Error: command timed out after {timeout_seconds}s"
-            if not partial:
-                return ToolResult(header, is_error=True)
-            return ToolResult(
-                _keep_last_lines(f"{header}\nPartial output:\n{partial}"),
-                is_error=True,
-            )
+        # Regular files, not pipes: `subprocess.run` waits for pipe EOF, so a
+        # backgrounded grandchild (`nohup srv &`) inheriting the pipe would keep
+        # the call hanging until the timeout. Output files are unlinked at
+        # creation, so nothing is left on disk however the call ends.
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            try:
+                proc = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=self.cwd,
+                    env=_child_env(),
+                    stdout=out,
+                    stderr=err,
+                    timeout=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                # Whatever the command produced before the deadline is still
+                # valuable — a build that fails at 95% has already said why.
+                partial = _combined(_read(out), _read(err))
+                header = f"Error: command timed out after {timeout_seconds}s"
+                if not partial:
+                    return ToolResult(header, is_error=True)
+                return ToolResult(
+                    _keep_last_lines(f"{header}\nPartial output:\n{partial}"),
+                    is_error=True,
+                )
 
-        output = _combined(proc.stdout, proc.stderr)
+            output = _combined(_read(out), _read(err))
         status = f"[exit code: {proc.returncode}]"
         output = f"{output}\n{status}" if output else status
         return ToolResult(_keep_last_lines(output), is_error=proc.returncode != 0)

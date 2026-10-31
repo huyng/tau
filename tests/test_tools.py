@@ -242,6 +242,20 @@ def test_bash_survives_non_utf8_output(bash):
     assert result.is_error is False
 
 
+def test_bash_returns_while_a_background_child_holds_its_output(bash):
+    """A backgrounded server must not hang the call until the timeout.
+
+    With pipes, `subprocess.run` waits for EOF, which only arrives once the
+    shell's grandchild exits too. `timeout=1` under the child's own `sleep 3`
+    makes a regression fail fast instead of just being slow.
+    """
+    result = bash.execute(command="sleep 3 & echo started", timeout=1)
+
+    assert "started" in result.output
+    assert "timed out" not in result.output
+    assert result.is_error is False
+
+
 def test_bash_timeout_keeps_partial_output(bash):
     result = bash.execute(command="printf 'started\\n'; sleep 5", timeout=1)
 
